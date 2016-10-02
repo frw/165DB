@@ -101,9 +101,7 @@ bool FUNCTION_NAME(load)(STRUCT_NAME *v, TYPE (*data_load)(FILE *), FILE *file) 
 #else
 
 void FUNCTION_NAME(destroy)(STRUCT_NAME *v) {
-    if (v->data != NULL) {
-        free(v->data);
-    }
+    free(v->data);
 }
 
 bool FUNCTION_NAME(save)(STRUCT_NAME *v, FILE *file) {

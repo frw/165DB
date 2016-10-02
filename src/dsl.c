@@ -57,7 +57,7 @@ void dsl_load(Vector *file_contents, Message *send_message) {
     }
 }
 
-inline unsigned int dsl_select_low(int *values, unsigned int values_count, int high,
+inline unsigned int dsl_select_lower(int *values, unsigned int values_count, int high,
         unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
@@ -67,12 +67,22 @@ inline unsigned int dsl_select_low(int *values, unsigned int values_count, int h
     return result_count;
 }
 
-inline unsigned int dsl_select_high(int *values, unsigned int values_count, int low,
+inline unsigned int dsl_select_higher(int *values, unsigned int values_count, int low,
         unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
         result[result_count] = i;
         result_count += values[i] >= low;
+    }
+    return result_count;
+}
+
+inline unsigned int dsl_select_equal(int *values, unsigned int values_count, int value,
+        unsigned int *result) {
+    unsigned int result_count = 0;
+    for (unsigned int i = 0; i < values_count; i++) {
+        result[result_count] = i;
+        result_count += values[i] == value;
     }
     return result_count;
 }
@@ -89,7 +99,7 @@ inline unsigned int dsl_select_range(int *values, unsigned int values_count, int
 }
 
 void dsl_select(ClientContext *client_context, GeneralizedColumnVariable *col_var, int low,
-bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
+        bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
     int *values;
     unsigned int values_count;
     if (col_var->is_column_fqn) {
@@ -114,25 +124,37 @@ bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message)
         values_count = variable->num_tuples;
     }
 
-    unsigned int *result = malloc(values_count * sizeof(unsigned int));
+    unsigned int *result;
     unsigned int result_count;
-    if (!has_low) {
-        result_count = dsl_select_low(values, values_count, high, result);
-    } else if (!has_high) {
-        result_count = dsl_select_high(values, values_count, low, result);
+    if (values_count == 0 || (has_low && has_high && low >= high)) {
+        result = NULL;
+        result_count = 0;
     } else {
-        result_count = dsl_select_range(values, values_count, low, high, result);
-    }
+        result = malloc(values_count * sizeof(unsigned int));
 
-    if (result_count < values_count) {
-        result = realloc(result, result_count * sizeof(unsigned int));
+        if (!has_low) {
+            result_count = dsl_select_lower(values, values_count, high, result);
+        } else if (!has_high) {
+            result_count = dsl_select_higher(values, values_count, low, result);
+        } else if (low == high - 1) {
+            result_count = dsl_select_equal(values, values_count, low, result);
+        } else {
+            result_count = dsl_select_range(values, values_count, low, high, result);
+        }
+
+        if (result_count == 0) {
+            free(result);
+            result = NULL;
+        } else if (result_count < values_count) {
+            result = realloc(result, result_count * sizeof(unsigned int));
+        }
     }
 
     variable_put(client_context, pos_out_var, POS, (VariableValues) { .pos_values = result },
             result_count);
 }
 
-inline unsigned int dsl_select_pos_low(unsigned int *positions, int *values,
+inline unsigned int dsl_select_pos_lower(unsigned int *positions, int *values,
         unsigned int values_count, int high, unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
@@ -142,12 +164,22 @@ inline unsigned int dsl_select_pos_low(unsigned int *positions, int *values,
     return result_count;
 }
 
-inline unsigned int dsl_select_pos_high(unsigned int *positions, int *values,
+inline unsigned int dsl_select_pos_higher(unsigned int *positions, int *values,
         unsigned int values_count, int low, unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
         result[result_count] = positions[i];
         result_count += values[i] >= low;
+    }
+    return result_count;
+}
+
+inline unsigned int dsl_select_pos_equal(unsigned int *positions, int *values,
+        unsigned int values_count, int value, unsigned int *result) {
+    unsigned int result_count = 0;
+    for (unsigned int i = 0; i < values_count; i++) {
+        result[result_count] = positions[i];
+        result_count += values[i] == value;
     }
     return result_count;
 }
@@ -164,7 +196,7 @@ inline unsigned int dsl_select_pos_range(unsigned int *positions, int *values,
 }
 
 void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var, int low,
-bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
+        bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
     Variable *pos = variable_lookup(client_context, pos_var);
     if (pos == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
@@ -196,18 +228,30 @@ bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message)
         return;
     }
 
-    unsigned int *result = malloc(values_count * sizeof(unsigned int));
+    unsigned int *result;
     unsigned int result_count;
-    if (!has_low) {
-        result_count = dsl_select_pos_low(positions, values, values_count, high, result);
-    } else if (!has_high) {
-        result_count = dsl_select_pos_high(positions, values, values_count, low, result);
+    if (values_count == 0 || (has_low && has_high && low >= high)) {
+        result = NULL;
+        result_count = 0;
     } else {
-        result_count = dsl_select_pos_range(positions, values, values_count, low, high, result);
-    }
+        result = malloc(values_count * sizeof(unsigned int));
 
-    if (result_count < values_count) {
-        result = realloc(result, result_count * sizeof(unsigned int));
+        if (!has_low) {
+            result_count = dsl_select_pos_lower(positions, values, values_count, high, result);
+        } else if (!has_high) {
+            result_count = dsl_select_pos_higher(positions, values, values_count, low, result);
+        } else if (low == high - 1) {
+            result_count = dsl_select_pos_equal(positions, values, values_count, low, result);
+        } else {
+            result_count = dsl_select_pos_range(positions, values, values_count, low, high, result);
+        }
+
+        if (result_count == 0) {
+            free(result);
+            result = NULL;
+        } else if (result_count < values_count) {
+            result = realloc(result, result_count * sizeof(unsigned int));
+        }
     }
 
     variable_put(client_context, pos_out_var, POS, (VariableValues) { .pos_values = result },
@@ -237,9 +281,14 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
     unsigned int *positions = pos->values.pos_values;
     unsigned int positions_count = pos->num_tuples;
 
-    int *result = malloc(positions_count * sizeof(int));
-    for (unsigned int i = 0; i < positions_count; i++) {
-        result[i] = values[positions[i]];
+    int *result;
+    if (positions_count == 0) {
+        result = NULL;
+    } else {
+        result = malloc(positions_count * sizeof(int));
+        for (unsigned int i = 0; i < positions_count; i++) {
+            result[i] = values[positions[i]];
+        }
     }
 
     variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = result },
@@ -318,6 +367,7 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
 
     int *value_out = malloc(sizeof(int));
     *value_out = min_value;
+
     variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = value_out },
             1);
 }
@@ -443,6 +493,7 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
 
     int *value_out = malloc(sizeof(int));
     *value_out = max_value;
+
     variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = value_out },
             1);
 }
@@ -520,11 +571,13 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 
     unsigned int *position_out = malloc(sizeof(unsigned int));
     *position_out = max_position;
+
     variable_put(client_context, pos_out_var, POS, (VariableValues) { .pos_values = position_out },
             1);
 
     int *value_out = malloc(sizeof(int));
     *value_out = max_value;
+
     variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = value_out },
             1);
 }
@@ -562,6 +615,7 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
 
     long long int *value_out = malloc(sizeof(long long int));
     *value_out = result;
+
     variable_put(client_context, val_out_var, LONG, (VariableValues) { .long_values = value_out },
             1);
 }
@@ -592,6 +646,11 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
         values_count = variable->num_tuples;
     }
 
+    if (values_count == 0) {
+        send_message->status = EMPTY_VECTOR;
+        return;
+    }
+
     long long int sum = 0;
     for (unsigned int i = 0; i < values_count; i++) {
         sum += values[i];
@@ -600,6 +659,7 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
 
     double *value_out = malloc(sizeof(double));
     *value_out = result;
+
     variable_put(client_context, val_out_var, FLOAT,
             (VariableValues) { .float_values = value_out }, 1);
 }
@@ -635,9 +695,14 @@ void dsl_add(ClientContext *client_context, char *val_var1, char *val_var2, char
         return;
     }
 
-    int *result = malloc(values1_count * sizeof(int));
-    for (unsigned int i = 0; i < values1_count; i++) {
-        result[i] = values1[i] + values2[i];
+    int *result;
+    if (values1_count == 0) {
+        result = NULL;
+    } else {
+        result = malloc(values1_count * sizeof(int));
+        for (unsigned int i = 0; i < values1_count; i++) {
+            result[i] = values1[i] + values2[i];
+        }
     }
 
     variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = result },
@@ -675,9 +740,14 @@ void dsl_sub(ClientContext *client_context, char *val_var1, char *val_var2, char
         return;
     }
 
-    int *result = malloc(values1_count * sizeof(int));
-    for (unsigned int i = 0; i < values1_count; i++) {
-        result[i] = values1[i] - values2[i];
+    int *result;
+    if (values1_count == 0) {
+        result = NULL;
+    } else {
+        result = malloc(values1_count * sizeof(int));
+        for (unsigned int i = 0; i < values1_count; i++) {
+            result[i] = values1[i] - values2[i];
+        }
     }
 
     variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = result },
@@ -711,20 +781,21 @@ void dsl_print(ClientContext *client_context, Vector *val_vars, Message *send_me
 
         variables[i] = variable;
 
-        // Values
-        switch (variable->type) {
-        case POS:
-            payload_length += num_tuples * sizeof(unsigned int);
-            break;
-        case INT:
-            payload_length += num_tuples * sizeof(int);
-            break;
-        case LONG:
-            payload_length += num_tuples * sizeof(long long);
-            break;
-        case FLOAT:
-            payload_length += num_tuples * sizeof(double);
-            break;
+        if (num_tuples > 0) {
+            switch (variable->type) {
+            case POS:
+                payload_length += num_tuples * sizeof(unsigned int);
+                break;
+            case INT:
+                payload_length += num_tuples * sizeof(int);
+                break;
+            case LONG:
+                payload_length += num_tuples * sizeof(long long);
+                break;
+            case FLOAT:
+                payload_length += num_tuples * sizeof(double);
+                break;
+            }
         }
     }
 
@@ -747,30 +818,32 @@ void dsl_print(ClientContext *client_context, Vector *val_vars, Message *send_me
         memcpy(payload, &type, sizeof(DataType));
         payload += sizeof(DataType);
 
-        void *values = NULL;
-        size_t values_length = 0;
+        if (num_tuples > 0) {
+            void *values = NULL;
+            size_t values_length = 0;
 
-        switch (variable->type) {
-        case POS:
-            values = variable->values.pos_values;
-            values_length = num_tuples * sizeof(unsigned int);
-            break;
-        case INT:
-            values = variable->values.int_values;
-            values_length = num_tuples * sizeof(int);
-            break;
-        case LONG:
-            values = variable->values.long_values;
-            values_length = num_tuples * sizeof(long long);
-            break;
-        case FLOAT:
-            values = variable->values.float_values;
-            values_length = num_tuples * sizeof(double);
-            break;
+            switch (variable->type) {
+            case POS:
+                values = variable->values.pos_values;
+                values_length = num_tuples * sizeof(unsigned int);
+                break;
+            case INT:
+                values = variable->values.int_values;
+                values_length = num_tuples * sizeof(int);
+                break;
+            case LONG:
+                values = variable->values.long_values;
+                values_length = num_tuples * sizeof(long long);
+                break;
+            case FLOAT:
+                values = variable->values.float_values;
+                values_length = num_tuples * sizeof(double);
+                break;
+            }
+
+            memcpy(payload, values, values_length);
+            payload += values_length;
         }
-
-        memcpy(payload, values, values_length);
-        payload += values_length;
     }
 }
 

@@ -1,4 +1,4 @@
-#define _BSD_SOURCE
+#define _GNU_SOURCE
 
 #include <fcntl.h>
 #include <stdio.h>

@@ -11,8 +11,7 @@
  * http://beej.us/guide/bgipc/output/html/multipage/unixsock.html
  */
 
-#define _BSD_SOURCE
-#define _XOPEN_SOURCE
+#define _GNU_SOURCE
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -265,7 +264,7 @@ void print_long(long long int *values, unsigned int pos) {
 }
 
 void print_float(double *values, unsigned int pos) {
-    printf("%f", values[pos]);
+    printf("%.2f", values[pos]);
 }
 
 void print_payload(char *payload) {
