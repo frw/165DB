@@ -1,0 +1,15 @@
+# Eclipse metadata
+src/.cproject
+src/.project
+src/.settings
+
+# Generated files
+src/client
+src/server
+src/load_test
+src/scan_test
+src/.deps
+src/*.o
+
+# Data files
+src/data

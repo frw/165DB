@@ -1,9 +1,10 @@
-#ifndef PARSE_H__
-#define PARSE_H__
-#include "cs165_api.h"
-#include "message.h"
+#ifndef PARSE_H
+#define PARSE_H
+
 #include "client_context.h"
+#include "db_operator.h"
+#include "message.h"
 
-DbOperator* parse_command(char* query_command, message* send_message, int client, ClientContext* context);
+DbOperator *parse_command(char* query_command, Message *send_message, ClientContext* context);
 
-#endif
+#endif /* PARSE_H */

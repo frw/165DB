@@ -5,16 +5,20 @@
 
 all: client server
 
+debug: CC += -g -ggdb3 -D LOG -D LOG_ERR -D LOG_INFO
+debug: O = 1
+debug: all
+
 # C-compiler settings
-CC = gcc -std=c99 -g -ggdb3
+CC = gcc -std=c99
 
 # Default optimization level
-O ?= 3
+O ?= fast
 
 # Flags and other libraries
-override CFLAGS += -Wall -Wextra -pedantic -pthread -O$(O) -I$(INCLUDES)
+override CFLAGS += -Wall -Wextra -Werror -pedantic -fshort-enums -pthread -O$(O) -I$(INCLUDES)
 LDFLAGS =
-LIBS =
+LIBS = -lm
 INCLUDES = include
 
 ####### Automatic dependency magic #######
@@ -51,17 +55,17 @@ $(DEPSDIR)/stamp $(BUILDSTAMP):
 # dependency on the right side of whichever one requires the file.
 ##
 
-client: client.o utils.o
+client: client.o common.o hash_table.o utils.o vector.o
 	$(CC) $(CFLAGS) $(DEPCFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
-server: server.o parse.o utils.o db_manager.o client_context.o
+server: client_context.o common.o db_manager.o db_operator.o dsl.o hash_table.o parse.o server.o utils.o vector.o
 	$(CC) $(CFLAGS) $(DEPCFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 clean:
 	rm -f client server *.o *~ *.bak core *.core cs165_unix_socket
-	rm -rf .deps
+	rm -rf $(DEPSDIR)
 
 distclean: clean
-	rm -rf $(DEPSDIR)
+	rm -rf data
 
 .PHONY: all clean distclean

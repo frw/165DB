@@ -1,7 +1,20 @@
 // This file includes shared constants and other values.
-#ifndef COMMON_H__
-#define COMMON_H__
+#ifndef COMMON_H
+#define COMMON_H
+
+#include "vector.h"
 
 #define SOCK_PATH "cs165_unix_socket"
 
-#endif  // COMMON_H__
+typedef enum DataType {
+    POS, INT, LONG, FLOAT
+} DataType;
+
+typedef struct FileColumn {
+    char *column_fqn;
+    IntVector values;
+} FileColumn;
+
+void file_column_free(FileColumn *col);
+
+#endif  /* COMMON_H */

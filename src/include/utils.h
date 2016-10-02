@@ -1,38 +1,68 @@
-// utils.h
-// CS165 Fall 2015
-//
-// Provides utility and helper functions that may be useful throughout.
-// Includes debugging tools.
+/**
+ * utils.h
+ * CS165 Fall 2016
+ *
+ * Provides utility and helper functions that may be useful throughout.
+ * Includes debugging tools.
+ */
 
-#ifndef __UTILS_H__
-#define __UTILS_H__
+#ifndef UTILS_H
+#define UTILS_H
 
 #include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 
 /**
- * trims newline characters from a string (in place)
- **/
-
-char* trim_newline(char *str);
-
-/**
- * trims parenthesis characters from a string (in place)
- **/
-
-char* trim_parenthesis(char *str);
+ * Joins 2 strings with a separator in between.
+ */
+char *strjoin(char *s1, char *s2, char sep);
 
 /**
- * trims whitespace characters from a string (in place)
- **/
-
-char* trim_whitespace(char *str);
+ * Finds the next highest power of two of a value.
+ */
+unsigned int round_up_power_of_two(unsigned int v);
 
 /**
- * trims quotations characters from a string (in place)
- **/
+ * Strips newline characters from a string (in place).
+ */
+char *strip_newline(char *str);
 
-char* trim_quotes(char *str);
+/**
+ * Strips parenthesis characters from a string (in place).
+ */
+char *strip_parenthesis(char *str);
+
+/**
+ * Strips whitespace characters from a string (in place).
+ */
+char *strip_whitespace(char *str);
+
+/**
+ * Strips quotations characters from a string (in place).
+ */
+char *strip_quotes(char *str);
+
+/**
+ * Checks if a string is a valid database/table/column/variable name.
+ */
+bool is_valid_name(char *str);
+
+/**
+ * Checks if a string is a valid table/column id of the form a.b.c.
+ */
+bool is_valid_fqn(char *str, unsigned int depth);
+
+/**
+ * Hashes any data of arbitrary length.
+ */
+size_t hash_bytes(const void *ptr, size_t len);
+
+/**
+ * Hashes a string of arbitrary length.
+ */
+size_t hash_string(char *key);
 
 // cs165_log(out, format, ...)
 // Writes the string from @format to the @out pointer, extendable for
@@ -57,4 +87,4 @@ void log_err(const char *format, ...);
 // Usage: log_info("Command received: %s", command_string);
 void log_info(const char *format, ...);
 
-#endif /* __UTILS_H__ */
+#endif /* UTILS_H */

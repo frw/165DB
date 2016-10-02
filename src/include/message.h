@@ -1,30 +1,62 @@
-#ifndef MESSAGE_H__
-#define MESSAGE_H__
+#ifndef MESSAGE_H
+#define MESSAGE_H
 
-// mesage_status defines the status of the previous request.
-// FEEL FREE TO ADD YOUR OWN OR REMOVE ANY THAT ARE UNUSED IN YOUR PROJECT
-typedef enum message_status {
-    OK_DONE,
-    OK_WAIT_FOR_RESPONSE,
-    UNKNOWN_COMMAND,
-    QUERY_UNSUPPORTED,
-    OBJECT_ALREADY_EXISTS,
-    OBJECT_NOT_FOUND,
-    INCORRECT_FORMAT, 
-    EXECUTION_ERROR,
-    INCORRECT_FILE_FORMAT,
-    FILE_NOT_FOUND,
-    INDEX_ALREADY_EXISTS
-} message_status;
+#include <stdlib.h>
 
-// message is a single packet of information sent between client/server.
-// message_status: defines the status of the message.
+#define SHUTDOWN_FLAG (1 << (sizeof(MessageStatus) * 8 - 1))
+
+// MesageStatus defines the status of the previous request.
+#define MESSAGE_STATUSES \
+    ENUM(OK) \
+    ENUM(OK_WAIT_FOR_RESPONSE) \
+    ENUM(UNKNOWN_COMMAND) \
+    ENUM(INCORRECT_FORMAT) \
+    ENUM(WRONG_NUMBER_OF_ARGUMENTS) \
+    ENUM(WRONG_NUMBER_OF_HANDLES) \
+    ENUM(QUERY_UNSUPPORTED) \
+    ENUM(DATABASE_ALREADY_EXISTS) \
+    ENUM(DATABASE_NOT_FOUND) \
+    ENUM(TABLE_ALREADY_EXISTS) \
+    ENUM(TABLE_NOT_FOUND) \
+    ENUM(INVALID_NUMBER_OF_COLUMNS) \
+    ENUM(TABLE_FULL) \
+    ENUM(TABLE_NOT_FULLY_INITIALIZED) \
+    ENUM(COLUMN_ALREADY_EXISTS) \
+    ENUM(COLUMN_NOT_FOUND) \
+    ENUM(INDEX_ALREADY_EXISTS) \
+    ENUM(VARIABLE_NOT_FOUND) \
+    ENUM(WRONG_VARIABLE_TYPE) \
+    ENUM(TUPLE_COUNT_MISMATCH) \
+    ENUM(EMPTY_VECTOR) \
+    ENUM(NO_SELECT_CONDITION) \
+    ENUM(INSERT_COLUMNS_MISMATCH) \
+    ENUM(FILE_READ_ERROR) \
+    ENUM(INCORRECT_FILE_FORMAT) \
+    ENUM(COMMUNICATION_ERROR) \
+
+typedef enum MessageStatus {
+#define ENUM(X) X,
+    MESSAGE_STATUSES
+#undef ENUM
+} MessageStatus;
+
+// Message is a single packet of information sent between client/server.
+// status: defines the status of the message.
 // length: defines the length of the string message to be sent.
 // payload: defines the payload of the message.
-typedef struct message {
-    message_status status;
-    int length;
-    char* payload;
-} message;
+typedef struct Message {
+    MessageStatus status;
+    size_t length;
+    void *payload;
+} Message;
 
-#endif
+inline char *message_status_to_string(MessageStatus status) {
+    switch (status) {
+#define ENUM(X) case X: return #X;
+    MESSAGE_STATUSES
+#undef ENUM
+    }
+    return NULL;
+}
+
+#endif /* MESSAGE_H */
