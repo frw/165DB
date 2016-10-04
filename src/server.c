@@ -35,7 +35,7 @@
 
 #define DEFAULT_QUERY_BUFFER_SIZE 1024
 
-void handle_db_operator(DbOperator *dbo, Message *message) {
+inline void handle_db_operator(DbOperator *dbo, Message *message) {
     if (dbo->type == LOAD) {
         int client_socket = dbo->context->client_socket;
 
@@ -187,7 +187,7 @@ void handle_client(int client_socket) {
  * This sets up the connection on the server side using unix sockets.
  * Returns a valid server socket fd on success, else -1 on failure.
  */
-int setup_server() {
+inline int setup_server() {
     int server_socket;
     size_t len;
     struct sockaddr_un local;

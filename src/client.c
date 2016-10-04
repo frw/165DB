@@ -13,15 +13,12 @@
 
 #define _GNU_SOURCE
 
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#include <sys/sendfile.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
 
@@ -43,7 +40,7 @@
  * Returns a valid client socket fd on success, else -1 on failure.
  *
  */
-int connect_client() {
+inline int connect_client() {
     int client_socket;
     size_t len;
     struct sockaddr_un remote;
@@ -80,7 +77,7 @@ inline ssize_t recv_and_check(int sockfd, void *buf, size_t len, int flags) {
     return received;
 }
 
-char *parse_load(char *load_arguments) {
+inline char *parse_load(char *load_arguments) {
     char *load_arguments_stripped = strip_parenthesis(load_arguments);
     if (load_arguments_stripped == load_arguments) {
         return NULL;
@@ -94,7 +91,7 @@ char *parse_load(char *load_arguments) {
     return load_arguments_stripped2;
 }
 
-Vector *load_file(char *file_name, MessageStatus *status) {
+inline Vector *load_file(char *file_name, MessageStatus *status) {
     FILE *file = fopen(file_name, "r");
     if (file == NULL) {
         *status = FILE_READ_ERROR;
@@ -216,7 +213,7 @@ CLEANUP:
     return cols;
 }
 
-bool send_file(int client_socket, Vector *columns) {
+inline bool send_file(int client_socket, Vector *columns) {
     unsigned int num_columns = columns->size;
     if (send(client_socket, &num_columns, sizeof(num_columns), 0) == -1) {
         return false;
@@ -251,52 +248,33 @@ bool send_file(int client_socket, Vector *columns) {
     return true;
 }
 
-void print_pos(unsigned int *values, unsigned int pos) {
-    printf("%u", values[pos]);
-}
-
-void print_int(int *values, unsigned int pos) {
-    printf("%d", values[pos]);
-}
-
-void print_long(long long int *values, unsigned int pos) {
-    printf("%lld", values[pos]);
-}
-
-void print_float(double *values, unsigned int pos) {
-    printf("%.2f", values[pos]);
-}
-
-void print_payload(char *payload) {
+inline void print_payload(char *payload) {
     unsigned int num_columns = *((unsigned int *) payload);
     payload += sizeof(unsigned int);
 
     unsigned int num_tuples = *((unsigned int *) payload);
     payload += sizeof(unsigned int);
 
+    DataType column_types[num_columns];
     void *column_values[num_columns];
-    void (*printers[num_columns])(void *, unsigned int);
 
     for (unsigned int i = 0; i < num_columns; i++) {
         DataType type = *((DataType *) payload);
+        column_types[i] = type;
         payload += sizeof(DataType);
 
         column_values[i] = payload;
         switch (type) {
         case POS:
-            printers[i] = (void (*)(void *, unsigned int)) &print_pos;
             payload += num_tuples * sizeof(unsigned int);
             break;
         case INT:
-            printers[i] = (void (*)(void *, unsigned int)) &print_int;
             payload += num_tuples * sizeof(int);
             break;
         case LONG:
-            printers[i] = (void (*)(void *, unsigned int)) &print_long;
             payload += num_tuples * sizeof(long long);
             break;
         case FLOAT:
-            printers[i] = (void (*)(void *, unsigned int)) &print_float;
             payload += num_tuples * sizeof(double);
             break;
         default:
@@ -309,7 +287,20 @@ void print_payload(char *payload) {
             if (j > 0) {
                 fputc(',', stdout);
             }
-            printers[j](column_values[j], i);
+            switch (column_types[j]) {
+            case POS:
+                printf("%u", ((unsigned int *) column_values[j])[i]);
+                break;
+            case INT:
+                printf("%d", ((int *) column_values[j])[i]);
+                break;
+            case LONG:
+                printf("%lld", ((long long *) column_values[j])[i]);
+                break;
+            case FLOAT:
+                printf("%.2f", ((double *) column_values[j])[i]);
+                break;
+            }
         }
         fputc('\n', stdout);
     }
