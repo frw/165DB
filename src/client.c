@@ -40,7 +40,7 @@
  * Returns a valid client socket fd on success, else -1 on failure.
  *
  */
-inline int connect_client() {
+static inline int connect_client() {
     int client_socket;
     size_t len;
     struct sockaddr_un remote;
@@ -64,7 +64,7 @@ inline int connect_client() {
     return client_socket;
 }
 
-inline ssize_t recv_and_check(int sockfd, void *buf, size_t len, int flags) {
+static inline ssize_t recv_and_check(int sockfd, void *buf, size_t len, int flags) {
     ssize_t received = recv(sockfd, buf, len, flags);
     if (received < 0) {
         log_err("Failed to receive message.\n");
@@ -77,7 +77,7 @@ inline ssize_t recv_and_check(int sockfd, void *buf, size_t len, int flags) {
     return received;
 }
 
-inline char *parse_load(char *load_arguments) {
+static inline char *parse_load(char *load_arguments) {
     char *load_arguments_stripped = strip_parenthesis(load_arguments);
     if (load_arguments_stripped == load_arguments) {
         return NULL;
@@ -91,7 +91,7 @@ inline char *parse_load(char *load_arguments) {
     return load_arguments_stripped2;
 }
 
-inline Vector *load_file(char *file_name, MessageStatus *status) {
+static inline Vector *load_file(char *file_name, MessageStatus *status) {
     FILE *file = fopen(file_name, "r");
     if (file == NULL) {
         *status = FILE_READ_ERROR;
@@ -213,7 +213,7 @@ CLEANUP:
     return cols;
 }
 
-inline bool send_file(int client_socket, Vector *columns) {
+static inline bool send_file(int client_socket, Vector *columns) {
     unsigned int num_columns = columns->size;
     if (send(client_socket, &num_columns, sizeof(num_columns), 0) == -1) {
         return false;
@@ -248,7 +248,7 @@ inline bool send_file(int client_socket, Vector *columns) {
     return true;
 }
 
-inline void print_payload(char *payload) {
+static inline void print_payload(char *payload) {
     unsigned int num_columns = *((unsigned int *) payload);
     payload += sizeof(unsigned int);
 
@@ -306,7 +306,7 @@ inline void print_payload(char *payload) {
     }
 }
 
-inline void print_error(MessageStatus status, bool interactive, unsigned int line_num) {
+static inline void print_error(MessageStatus status, bool interactive, unsigned int line_num) {
     char *error = message_status_to_string(status);
     if (interactive) {
         fprintf(stderr, "Error: %s\n", error);

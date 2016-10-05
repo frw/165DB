@@ -19,7 +19,7 @@
  * In addition, the original string now points to the first character after that comma.
  * This method destroys its input.
  */
-inline char *next_token(char **tokenizer, char *sep, MessageStatus *status, MessageStatus error) {
+static inline char *next_token(char **tokenizer, char *sep, MessageStatus *status, MessageStatus error) {
     char *token = strsep(tokenizer, sep);
     if (token == NULL) {
         *status = error;
@@ -215,7 +215,7 @@ DbOperator *parse_load(char *handle, char *load_arguments, Message *message) {
     return dbo;
 }
 
-inline void parse_optional_number(char *token, int *value, bool *has_value, MessageStatus *status) {
+static inline void parse_optional_number(char *token, int *value, bool *has_value, MessageStatus *status) {
     if (strcmp(token, "null") == 0) {
         *value = 0;
         *has_value = false;

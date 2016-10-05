@@ -57,7 +57,7 @@ void dsl_load(Vector *file_contents, Message *send_message) {
     }
 }
 
-inline unsigned int dsl_select_lower(int *values, unsigned int values_count, int high,
+static inline unsigned int dsl_select_lower(int *values, unsigned int values_count, int high,
         unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
@@ -67,7 +67,7 @@ inline unsigned int dsl_select_lower(int *values, unsigned int values_count, int
     return result_count;
 }
 
-inline unsigned int dsl_select_higher(int *values, unsigned int values_count, int low,
+static inline unsigned int dsl_select_higher(int *values, unsigned int values_count, int low,
         unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
@@ -77,7 +77,7 @@ inline unsigned int dsl_select_higher(int *values, unsigned int values_count, in
     return result_count;
 }
 
-inline unsigned int dsl_select_equal(int *values, unsigned int values_count, int value,
+static inline unsigned int dsl_select_equal(int *values, unsigned int values_count, int value,
         unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
@@ -87,7 +87,7 @@ inline unsigned int dsl_select_equal(int *values, unsigned int values_count, int
     return result_count;
 }
 
-inline unsigned int dsl_select_range(int *values, unsigned int values_count, int low, int high,
+static inline unsigned int dsl_select_range(int *values, unsigned int values_count, int low, int high,
         unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
@@ -154,7 +154,7 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnVariable *col_va
             result_count);
 }
 
-inline unsigned int dsl_select_pos_lower(unsigned int *positions, int *values,
+static inline unsigned int dsl_select_pos_lower(unsigned int *positions, int *values,
         unsigned int values_count, int high, unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
@@ -164,7 +164,7 @@ inline unsigned int dsl_select_pos_lower(unsigned int *positions, int *values,
     return result_count;
 }
 
-inline unsigned int dsl_select_pos_higher(unsigned int *positions, int *values,
+static inline unsigned int dsl_select_pos_higher(unsigned int *positions, int *values,
         unsigned int values_count, int low, unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
@@ -174,7 +174,7 @@ inline unsigned int dsl_select_pos_higher(unsigned int *positions, int *values,
     return result_count;
 }
 
-inline unsigned int dsl_select_pos_equal(unsigned int *positions, int *values,
+static inline unsigned int dsl_select_pos_equal(unsigned int *positions, int *values,
         unsigned int values_count, int value, unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
@@ -184,7 +184,7 @@ inline unsigned int dsl_select_pos_equal(unsigned int *positions, int *values,
     return result_count;
 }
 
-inline unsigned int dsl_select_pos_range(unsigned int *positions, int *values,
+static inline unsigned int dsl_select_pos_range(unsigned int *positions, int *values,
         unsigned int values_count, int low, int high, unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
@@ -295,7 +295,7 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
             positions_count);
 }
 
-inline void dsl_insert(Column *column, int value) {
+static inline void dsl_insert(Column *column, int value) {
     int_vector_append(&column->values, value);
 }
 

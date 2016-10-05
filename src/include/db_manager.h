@@ -70,13 +70,13 @@ void db_create(char *name, Message *send_message);
 void table_create(char *name, char *db_name, unsigned int num_columns, Message *send_message);
 void column_create(char *name, char *table_fqn, Message *send_message);
 
-inline Db *db_lookup(char *db_name) {
+static inline Db *db_lookup(char *db_name) {
     return hash_table_get(&db_manager_table, db_name);
 }
-inline Table *table_lookup(char *table_fqn) {
+static inline Table *table_lookup(char *table_fqn) {
     return hash_table_get(&db_manager_table, table_fqn);
 }
-inline Column *column_lookup(char *column_fqn) {
+static inline Column *column_lookup(char *column_fqn) {
     return hash_table_get(&db_manager_table, column_fqn);
 }
 

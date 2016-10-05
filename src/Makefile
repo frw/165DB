@@ -6,7 +6,7 @@
 all: client server
 
 debug: CC += -g -ggdb3 -D LOG -D LOG_ERR -D LOG_INFO
-debug: O = 1
+debug: O = 0
 debug: all
 
 # C-compiler settings

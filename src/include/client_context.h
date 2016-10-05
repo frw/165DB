@@ -35,7 +35,7 @@ void client_context_destroy(ClientContext *client_context);
 void variable_put(ClientContext *client_context, char *name, DataType type, VariableValues values,
         unsigned int num_tuples);
 
-inline Variable *variable_lookup(ClientContext *client_context, char *name) {
+static inline Variable *variable_lookup(ClientContext *client_context, char *name) {
     return hash_table_get(&client_context->variables_table, name);
 }
 

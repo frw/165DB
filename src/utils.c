@@ -96,7 +96,7 @@ char *strip_quotes(char *str) {
     return ++str;
 }
 
-inline bool is_valid_name_char(char c) {
+static inline bool is_valid_name_char(char c) {
     return c == '_' || c == '-' || isalnum(c);
 }
 

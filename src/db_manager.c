@@ -28,21 +28,21 @@ Db *db_manager_dbs = NULL;
 
 HashTable db_manager_table;
 
-inline void db_free(Db *db);
-inline void table_free(Table *table);
-inline void column_free(Column *column);
+static inline void db_free(Db *db);
+static inline void table_free(Table *table);
+static inline void column_free(Column *column);
 
-inline bool db_save(Db *db);
-inline bool table_save(Table *table, FILE *file);
-inline bool column_save(Column *column, FILE *file);
+static inline bool db_save(Db *db);
+static inline bool table_save(Table *table, FILE *file);
+static inline bool column_save(Column *column, FILE *file);
 
-inline Db *db_load(char *db_name);
-inline Table *table_load(FILE *file);
-inline bool column_load(Column *column, FILE *file);
+static inline Db *db_load(char *db_name);
+static inline Table *table_load(FILE *file);
+static inline bool column_load(Column *column, FILE *file);
 
-inline void db_register(Db *db);
-inline void table_register(Table *table, char *db_name);
-inline void column_register(Column *column, char *table_fqn);
+static inline void db_register(Db *db);
+static inline void table_register(Table *table, char *db_name);
+static inline void column_register(Column *column, char *table_fqn);
 
 void db_manager_startup() {
     hash_table_init(&db_manager_table, DB_MANAGER_TABLE_INITIAL_CAPACITY,
@@ -159,7 +159,7 @@ void column_create(char *name, char *table_fqn, Message *send_message) {
     free(column_fqn);
 }
 
-inline void db_free(Db *db) {
+static inline void db_free(Db *db) {
     free(db->name);
     for (Table *table = db->tables, *next; table != NULL; table = next) {
         next = table->next;
@@ -168,7 +168,7 @@ inline void db_free(Db *db) {
     free(db);
 }
 
-inline void table_free(Table *table) {
+static inline void table_free(Table *table) {
     free(table->name);
     for (size_t i = 0; i < table->columns_count; i++) {
         column_free(&table->columns[i]);
@@ -177,12 +177,12 @@ inline void table_free(Table *table) {
     free(table);
 }
 
-inline void column_free(Column *column) {
+static inline void column_free(Column *column) {
     free(column->name);
     int_vector_destroy(&column->values);
 }
 
-inline bool db_save(Db *db) {
+static inline bool db_save(Db *db) {
     struct stat st;
 
     if (stat(DATA_DIRECTORY, &st) == 0) {
@@ -232,7 +232,7 @@ ERROR:
     return false;
 }
 
-inline bool table_save(Table *table, FILE *file) {
+static inline bool table_save(Table *table, FILE *file) {
     unsigned int name_length = strlen(table->name);
     if (fwrite(&name_length, sizeof(name_length), 1, file) != 1) {
         log_err("Unable to write table name length\n");
@@ -263,7 +263,7 @@ inline bool table_save(Table *table, FILE *file) {
     return true;
 }
 
-inline bool column_save(Column *column, FILE *file) {
+static inline bool column_save(Column *column, FILE *file) {
     unsigned int name_length = strlen(column->name);
     if (fwrite(&name_length, sizeof(name_length), 1, file) != 1) {
         log_err("Unable to write column name length\n");
@@ -284,7 +284,7 @@ inline bool column_save(Column *column, FILE *file) {
 }
 
 
-inline Db *db_load(char *db_name) {
+static inline Db *db_load(char *db_name) {
     char path[MAX_PATH_LENGTH];
     sprintf(path, "%s/%s", DATA_DIRECTORY, db_name);
 
@@ -337,7 +337,7 @@ inline Db *db_load(char *db_name) {
     return db;
 }
 
-inline Table *table_load(FILE *file) {
+static inline Table *table_load(FILE *file) {
     unsigned int name_length;
     if (fread(&name_length, sizeof(name_length), 1, file) != 1) {
         log_err("Unable to read table name length\n");
@@ -388,7 +388,7 @@ inline Table *table_load(FILE *file) {
     return table;
 }
 
-inline bool column_load(Column *column, FILE *file)  {
+static inline bool column_load(Column *column, FILE *file)  {
     unsigned int name_length;
     if (fread(&name_length, sizeof(name_length), 1, file) != 1) {
         log_err("Unable to read column name length\n");
@@ -415,7 +415,7 @@ inline bool column_load(Column *column, FILE *file)  {
     return true;
 }
 
-inline void db_register(Db *db) {
+static inline void db_register(Db *db) {
     hash_table_put(&db_manager_table, db->name, db);
 
     for (Table *table = db->tables; table != NULL; table = table->next) {
@@ -423,7 +423,7 @@ inline void db_register(Db *db) {
     }
 }
 
-inline void table_register(Table *table, char *db_name) {
+static inline void table_register(Table *table, char *db_name) {
     char *table_fqn = strjoin(db_name, table->name, '.');
 
     hash_table_put(&db_manager_table, table_fqn, table);
@@ -435,7 +435,7 @@ inline void table_register(Table *table, char *db_name) {
     free(table_fqn);
 }
 
-inline void column_register(Column *column, char *table_fqn) {
+static inline void column_register(Column *column, char *table_fqn) {
     char *column_fqn = strjoin(table_fqn, column->name, '.');
 
     hash_table_put(&db_manager_table, column_fqn, column);

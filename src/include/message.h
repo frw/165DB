@@ -50,7 +50,7 @@ typedef struct Message {
     void *payload;
 } Message;
 
-inline char *message_status_to_string(MessageStatus status) {
+static inline char *message_status_to_string(MessageStatus status) {
     switch (status) {
 #define ENUM(X) case X: return #X;
     MESSAGE_STATUSES

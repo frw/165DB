@@ -19,7 +19,7 @@ void hash_table_init(HashTable *h, unsigned int initial_capacity, float load_fac
     h->load_factor = load_factor;
 }
 
-inline void hash_table_resize(HashTable *h, unsigned int minimum_capacity) {
+static inline void hash_table_resize(HashTable *h, unsigned int minimum_capacity) {
     free(h->buckets);
 
     minimum_capacity = round_up_power_of_two(minimum_capacity);
