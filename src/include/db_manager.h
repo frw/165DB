@@ -51,6 +51,15 @@ struct Table {
     Table *next;
 };
 
+typedef enum ColumnIndexType {
+    BTREE_CLUSTERED_PRINCIPAL,
+    BTREE_CLUSTERED_AUXILIARY,
+    BTREE_UNCLUSTERED,
+    SORTED_CLUSTERED_PRINCIPAL,
+    SORTED_CLUSTERED_AUXILIARY,
+    SORTED_UNCLUSTERED
+} ColumnIndexType;
+
 // struct ColumnIndex;
 
 struct Column {

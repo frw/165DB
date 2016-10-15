@@ -30,7 +30,7 @@
 #include "db_manager.h"
 #include "db_operator.h"
 #include "message.h"
-#include "parse.h"
+#include "parser.h"
 #include "utils.h"
 
 #define DEFAULT_QUERY_BUFFER_SIZE 1024

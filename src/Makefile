@@ -58,7 +58,7 @@ $(DEPSDIR)/stamp $(BUILDSTAMP):
 client: client.o common.o hash_table.o utils.o vector.o
 	$(CC) $(CFLAGS) $(DEPCFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
-server: client_context.o common.o db_manager.o db_operator.o dsl.o hash_table.o parse.o server.o utils.o vector.o
+server: client_context.o common.o db_manager.o db_operator.o dsl.o hash_table.o parser.o server.o utils.o vector.o
 	$(CC) $(CFLAGS) $(DEPCFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 clean:
@@ -68,4 +68,4 @@ clean:
 distclean: clean
 	rm -rf data
 
-.PHONY: all clean distclean
+.PHONY: all debug clean distclean

@@ -1,3 +1,4 @@
+
 #define _BSD_SOURCE
 
 #include <ctype.h>
@@ -9,7 +10,8 @@
 #include "client_context.h"
 #include "db_manager.h"
 #include "db_operator.h"
-#include "parse.h"
+#include "dsl.h"
+#include "parser.h"
 #include "utils.h"
 #include "vector.h"
 
@@ -154,6 +156,58 @@ DbOperator *parse_create_col(char *create_arguments, Message *message) {
     return dbo;
 }
 
+DbOperator *parse_create_idx(char *create_arguments, Message *message) {
+    char **create_arguments_index = &create_arguments;
+    MessageStatus *status = &message->status;
+
+    char *column_fqn = next_token(create_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+    char *index_type = next_token(create_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+    char *clustered_param = next_token(create_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+
+    if (message->status == WRONG_NUMBER_OF_ARGUMENTS) {
+        // Not enough arguments.
+        return NULL;
+    }
+
+    if (create_arguments != NULL) {
+        // Too many arguments.
+        message->status = WRONG_NUMBER_OF_ARGUMENTS;
+        return NULL;
+    }
+
+    if (!is_valid_fqn(column_fqn, 2)) {
+        message->status = INCORRECT_FORMAT;
+        return NULL;
+    }
+
+    CreateIndexType type;
+    if (strcmp(index_type, "btree") == 0) {
+        type = BTREE;
+    } else if (strcmp(index_type, "sorted") == 0) {
+        type = SORTED;
+    } else {
+        message->status = UNKNOWN_COMMAND;
+        return NULL;
+    }
+
+    bool clustered;
+    if (strcmp(clustered_param, "clustered") == 0) {
+        clustered = true;
+    } else if (strcmp(clustered_param, "unclustered") == 0) {
+        clustered = false;
+    } else {
+        message->status = UNKNOWN_COMMAND;
+        return NULL;
+    }
+
+    DbOperator *dbo = malloc(sizeof(DbOperator));
+    dbo->type = CREATE_IDX;
+    dbo->fields.create_index.column_fqn = strdup(column_fqn);
+    dbo->fields.create_index.type = type;
+    dbo->fields.create_index.clustered = clustered;
+    return dbo;
+}
+
 DbOperator *parse_create(char *handle, char *create_arguments, Message *message) {
     if (handle != NULL) {
         message->status = WRONG_NUMBER_OF_HANDLES;
@@ -184,8 +238,7 @@ DbOperator *parse_create(char *handle, char *create_arguments, Message *message)
     } else if (strcmp(type, "col") == 0) {
         return parse_create_col(create_arguments_stripped, message);
     } else if (strcmp(type, "idx") == 0) {
-        message->status = QUERY_UNSUPPORTED;
-        return NULL;
+        return parse_create_idx(create_arguments_stripped, message);
     } else {
         message->status = UNKNOWN_COMMAND;
         return NULL;
@@ -261,14 +314,14 @@ DbOperator *parse_select(char *pos_out_var, char *select_arguments, Message *mes
     }
 
     if (select_arguments_stripped == NULL) {
-        char *col_var = arg1;
+        char *col_hdl = arg1;
         char *low = arg2;
         char *high = arg3;
 
         bool is_column_fqn;
-        if (is_valid_name(col_var)) {
+        if (is_valid_name(col_hdl)) {
             is_column_fqn = false;
-        } else if (is_valid_fqn(col_var, 2)) {
+        } else if (is_valid_fqn(col_hdl, 2)) {
             is_column_fqn = true;
         } else {
             message->status = INCORRECT_FORMAT;
@@ -296,8 +349,8 @@ DbOperator *parse_select(char *pos_out_var, char *select_arguments, Message *mes
 
         DbOperator *dbo = malloc(sizeof(DbOperator));
         dbo->type = SELECT;
-        dbo->fields.select.col_var.name = strdup(col_var);
-        dbo->fields.select.col_var.is_column_fqn = is_column_fqn;
+        dbo->fields.select.col_hdl.name = strdup(col_hdl);
+        dbo->fields.select.col_hdl.is_column_fqn = is_column_fqn;
         dbo->fields.select.low = low_val;
         dbo->fields.select.has_low = has_low;
         dbo->fields.select.high = high_val;
@@ -469,15 +522,15 @@ DbOperator *parse_min(char *handle, char *max_arguments, Message *message) {
     char *arg1 = next_token(min_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
 
     if (min_arguments_stripped == NULL) {
-        char *col_var = arg1;
-        if (*col_var == '\0') {
+        char *col_hdl = arg1;
+        if (*col_hdl == '\0') {
             message->status = WRONG_NUMBER_OF_ARGUMENTS;
             return NULL;
         }
         bool is_column_fqn;
-        if (is_valid_name(col_var)) {
+        if (is_valid_name(col_hdl)) {
             is_column_fqn = false;
-        } else if (is_valid_fqn(col_var, 2)) {
+        } else if (is_valid_fqn(col_hdl, 2)) {
             is_column_fqn = true;
         } else {
             message->status = INCORRECT_FORMAT;
@@ -492,13 +545,13 @@ DbOperator *parse_min(char *handle, char *max_arguments, Message *message) {
 
         DbOperator *dbo = malloc(sizeof(DbOperator));
         dbo->type = MIN;
-        dbo->fields.min.col_var.name = strdup(col_var);
-        dbo->fields.min.col_var.is_column_fqn = is_column_fqn;
+        dbo->fields.min.col_hdl.name = strdup(col_hdl);
+        dbo->fields.min.col_hdl.is_column_fqn = is_column_fqn;
         dbo->fields.min.val_out_var = strdup(val_out_var);
         return dbo;
     } else {
         char *pos_var = arg1;
-        char *col_var = min_arguments_stripped;
+        char *col_hdl = min_arguments_stripped;
 
         if (strcmp(pos_var, "null") == 0) {
             pos_var = NULL;
@@ -508,9 +561,9 @@ DbOperator *parse_min(char *handle, char *max_arguments, Message *message) {
         }
 
         bool is_column_fqn;
-        if (is_valid_name(col_var)) {
+        if (is_valid_name(col_hdl)) {
             is_column_fqn = false;
-        } else if (is_valid_fqn(col_var, 2)) {
+        } else if (is_valid_fqn(col_hdl, 2)) {
             is_column_fqn = true;
         } else {
             message->status = INCORRECT_FORMAT;
@@ -539,8 +592,8 @@ DbOperator *parse_min(char *handle, char *max_arguments, Message *message) {
         DbOperator *dbo = malloc(sizeof(DbOperator));
         dbo->type = MIN_POS;
         dbo->fields.min_pos.pos_var = pos_var == NULL ? NULL : strdup(pos_var);
-        dbo->fields.min_pos.col_var.name = strdup(col_var);
-        dbo->fields.min_pos.col_var.is_column_fqn = is_column_fqn;
+        dbo->fields.min_pos.col_hdl.name = strdup(col_hdl);
+        dbo->fields.min_pos.col_hdl.is_column_fqn = is_column_fqn;
         dbo->fields.min_pos.pos_out_var = strdup(pos_out_var);
         dbo->fields.min_pos.val_out_var = strdup(val_out_var);
         return dbo;
@@ -566,15 +619,15 @@ DbOperator *parse_max(char *handle, char *max_arguments, Message *message) {
     char *arg1 = next_token(max_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
 
     if (max_arguments_stripped == NULL) {
-        char *col_var = arg1;
-        if (*col_var == '\0') {
+        char *col_hdl = arg1;
+        if (*col_hdl == '\0') {
             message->status = WRONG_NUMBER_OF_ARGUMENTS;
             return NULL;
         }
         bool is_column_fqn;
-        if (is_valid_name(col_var)) {
+        if (is_valid_name(col_hdl)) {
             is_column_fqn = false;
-        } else if (is_valid_fqn(col_var, 2)) {
+        } else if (is_valid_fqn(col_hdl, 2)) {
             is_column_fqn = true;
         } else {
             message->status = INCORRECT_FORMAT;
@@ -589,13 +642,13 @@ DbOperator *parse_max(char *handle, char *max_arguments, Message *message) {
 
         DbOperator *dbo = malloc(sizeof(DbOperator));
         dbo->type = MAX;
-        dbo->fields.max.col_var.name = strdup(col_var);
-        dbo->fields.max.col_var.is_column_fqn = is_column_fqn;
+        dbo->fields.max.col_hdl.name = strdup(col_hdl);
+        dbo->fields.max.col_hdl.is_column_fqn = is_column_fqn;
         dbo->fields.max.val_out_var = strdup(val_out_var);
         return dbo;
     } else {
         char *pos_var = arg1;
-        char *col_var = max_arguments_stripped;
+        char *col_hdl = max_arguments_stripped;
 
         if (strcmp(pos_var, "null") == 0) {
             pos_var = NULL;
@@ -605,9 +658,9 @@ DbOperator *parse_max(char *handle, char *max_arguments, Message *message) {
         }
 
         bool is_column_fqn;
-        if (is_valid_name(col_var)) {
+        if (is_valid_name(col_hdl)) {
             is_column_fqn = false;
-        } else if (is_valid_fqn(col_var, 2)) {
+        } else if (is_valid_fqn(col_hdl, 2)) {
             is_column_fqn = true;
         } else {
             message->status = INCORRECT_FORMAT;
@@ -636,8 +689,8 @@ DbOperator *parse_max(char *handle, char *max_arguments, Message *message) {
         DbOperator *dbo = malloc(sizeof(DbOperator));
         dbo->type = MAX_POS;
         dbo->fields.max_pos.pos_var = pos_var == NULL ? NULL : strdup(pos_var);
-        dbo->fields.max_pos.col_var.name = strdup(col_var);
-        dbo->fields.max_pos.col_var.is_column_fqn = is_column_fqn;
+        dbo->fields.max_pos.col_hdl.name = strdup(col_hdl);
+        dbo->fields.max_pos.col_hdl.is_column_fqn = is_column_fqn;
         dbo->fields.max_pos.pos_out_var = strdup(pos_out_var);
         dbo->fields.max_pos.val_out_var = strdup(val_out_var);
         return dbo;
@@ -661,15 +714,15 @@ DbOperator *parse_sum(char *val_out_var, char *sum_arguments, Message *message) 
         return NULL;
     }
 
-    char *col_var = sum_arguments_stripped;
-    if (*col_var == '\0') {
+    char *col_hdl = sum_arguments_stripped;
+    if (*col_hdl == '\0') {
         message->status = WRONG_NUMBER_OF_ARGUMENTS;
         return NULL;
     }
     bool is_column_fqn;
-    if (is_valid_name(col_var)) {
+    if (is_valid_name(col_hdl)) {
         is_column_fqn = false;
-    } else if (is_valid_fqn(col_var, 2)) {
+    } else if (is_valid_fqn(col_hdl, 2)) {
         is_column_fqn = true;
     } else {
         message->status = INCORRECT_FORMAT;
@@ -678,8 +731,8 @@ DbOperator *parse_sum(char *val_out_var, char *sum_arguments, Message *message) 
 
     DbOperator *dbo = malloc(sizeof(DbOperator));
     dbo->type = SUM;
-    dbo->fields.sum.col_var.name = strdup(col_var);
-    dbo->fields.sum.col_var.is_column_fqn = is_column_fqn;
+    dbo->fields.sum.col_hdl.name = strdup(col_hdl);
+    dbo->fields.sum.col_hdl.is_column_fqn = is_column_fqn;
     dbo->fields.sum.val_out_var = strdup(val_out_var);
     return dbo;
 }
@@ -701,15 +754,15 @@ DbOperator *parse_avg(char *val_out_var, char *avg_arguments, Message *message) 
         return NULL;
     }
 
-    char *col_var = avg_arguments_stripped;
-    if (*col_var == '\0') {
+    char *col_hdl = avg_arguments_stripped;
+    if (*col_hdl == '\0') {
         message->status = WRONG_NUMBER_OF_ARGUMENTS;
         return NULL;
     }
     bool is_column_fqn;
-    if (is_valid_name(col_var)) {
+    if (is_valid_name(col_hdl)) {
         is_column_fqn = false;
-    } else if (is_valid_fqn(col_var, 2)) {
+    } else if (is_valid_fqn(col_hdl, 2)) {
         is_column_fqn = true;
     } else {
         message->status = INCORRECT_FORMAT;
@@ -718,8 +771,8 @@ DbOperator *parse_avg(char *val_out_var, char *avg_arguments, Message *message) 
 
     DbOperator *dbo = malloc(sizeof(DbOperator));
     dbo->type = AVG;
-    dbo->fields.avg.col_var.name = strdup(col_var);
-    dbo->fields.avg.col_var.is_column_fqn = is_column_fqn;
+    dbo->fields.avg.col_hdl.name = strdup(col_hdl);
+    dbo->fields.avg.col_hdl.is_column_fqn = is_column_fqn;
     dbo->fields.avg.val_out_var = strdup(val_out_var);
     return dbo;
 }

@@ -34,7 +34,7 @@ typedef struct CreateColumnOperator {
  */
 typedef struct CreateIndexOperator {
 	char *column_fqn;
-	ColumnIndexType type;
+	CreateIndexType type;
 	bool clustered;
 } CreateIndexOperator;
 
@@ -49,7 +49,7 @@ typedef struct LoadOperator {
  * Necessary fields for selection.
  */
 typedef struct SelectOperator {
-    GeneralizedColumnVariable col_var;
+    GeneralizedColumnHandle col_hdl;
     int low;
     bool has_low;
     int high;
@@ -88,36 +88,36 @@ typedef struct RelationalInsertOperator {
 } RelationalInsertOperator;
 
 typedef struct MinOperator {
-    GeneralizedColumnVariable col_var;
+    GeneralizedColumnHandle col_hdl;
     char *val_out_var;
 } MinOperator;
 
 typedef struct MinPosOperator {
     char *pos_var;
-    GeneralizedColumnVariable col_var;
+    GeneralizedColumnHandle col_hdl;
     char *pos_out_var;
     char *val_out_var;
 } MinPosOperator;
 
 typedef struct MaxOperator {
-    GeneralizedColumnVariable col_var;
+    GeneralizedColumnHandle col_hdl;
     char *val_out_var;
 } MaxOperator;
 
 typedef struct MaxPosOperator {
     char *pos_var;
-    GeneralizedColumnVariable col_var;
+    GeneralizedColumnHandle col_hdl;
     char *pos_out_var;
     char *val_out_var;
 } MaxPosOperator;
 
 typedef struct SumOperator {
-    GeneralizedColumnVariable col_var;
+    GeneralizedColumnHandle col_hdl;
     char *val_out_var;
 } SumOperator;
 
 typedef struct AvgOperator {
-    GeneralizedColumnVariable col_var;
+    GeneralizedColumnHandle col_hdl;
     char *val_out_var;
 } AvgOperator;
 

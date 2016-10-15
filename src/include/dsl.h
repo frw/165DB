@@ -5,26 +5,27 @@
 #include "message.h"
 #include "vector.h"
 
-typedef enum ColumnIndexType {
+typedef enum CreateIndexType {
     BTREE, SORTED
-} ColumnIndexType;
+} CreateIndexType;
 
 typedef enum JoinType {
     HASH, NESTED_LOOP
 } JoinType;
 
-typedef struct GeneralizedColumnVariable {
+typedef struct GeneralizedColumnHandle {
     char *name;
     bool is_column_fqn;
-} GeneralizedColumnVariable;
+} GeneralizedColumnHandle;
 
 void dsl_create_db(char *name, Message *send_message);
 void dsl_create_table(char *name, char *db_name, unsigned int num_columns, Message *send_message);
 void dsl_create_column(char *name, char *table_fqn, Message *send_message);
+void dsl_create_index(char *column_fqn, CreateIndexType type, bool clustered, Message *send_message);
 
 void dsl_load(Vector *file_contents, Message *send_message);
 
-void dsl_select(ClientContext *client_context, GeneralizedColumnVariable *col_var, int low,
+void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, int low,
         bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message);
 void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var, int low,
         bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message);
@@ -42,18 +43,18 @@ void dsl_join(ClientContext *client_context, char *val_var1, char *pos_var1, cha
         char *pos_var2, char *pos_out_var1, char *pos_out_var2, JoinType type,
         Message *send_message);
 
-void dsl_min(ClientContext *client_context, GeneralizedColumnVariable *col_var, char *val_out_var,
+void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message);
-void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumnVariable *col_var,
+void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumnHandle *col_hdl,
         char *pos_out_var, char *val_out_var, Message *send_message);
-void dsl_max(ClientContext *client_context, GeneralizedColumnVariable *col_var, char *val_out_var,
+void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message);
-void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumnVariable *col_var,
+void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumnHandle *col_hdl,
         char *pos_out_var, char *val_out_var, Message *send_message);
 
-void dsl_sum(ClientContext *client_context, GeneralizedColumnVariable *col_var, char *val_out_var,
+void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message);
-void dsl_avg(ClientContext *client_context, GeneralizedColumnVariable *col_var, char *val_out_var,
+void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message);
 
 void dsl_add(ClientContext *client_context, char *val_var1, char *val_var2, char *val_out_var,

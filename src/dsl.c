@@ -21,6 +21,13 @@ void dsl_create_column(char *name, char *table_fqn, Message *send_message) {
     column_create(name, table_fqn, send_message);
 }
 
+void dsl_create_index(char *column_fqn, CreateIndexType type, bool clustered, Message *send_message) {
+    (void) column_fqn;
+    (void) type;
+    (void) clustered;
+    (void) send_message;
+}
+
 void dsl_load(Vector *file_contents, Message *send_message) {
     unsigned int num_columns = file_contents->size;
 
@@ -98,12 +105,12 @@ static inline unsigned int dsl_select_range(int *values, unsigned int values_cou
     return result_count;
 }
 
-void dsl_select(ClientContext *client_context, GeneralizedColumnVariable *col_var, int low,
+void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, int low,
         bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
     int *values;
     unsigned int values_count;
-    if (col_var->is_column_fqn) {
-        Column *column = column_lookup(col_var->name);
+    if (col_hdl->is_column_fqn) {
+        Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             return;
@@ -111,7 +118,7 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnVariable *col_va
         values = column->values.data;
         values_count = column->values.size;
     } else {
-        Variable *variable = variable_lookup(client_context, col_var->name);
+        Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
             send_message->status = VARIABLE_NOT_FOUND;
             return;
@@ -150,8 +157,7 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnVariable *col_va
         }
     }
 
-    variable_put(client_context, pos_out_var, POS, (VariableValues) { .pos_values = result },
-            result_count);
+    pos_result_put(client_context, pos_out_var, result, result_count);
 }
 
 static inline unsigned int dsl_select_pos_lower(unsigned int *positions, int *values,
@@ -197,7 +203,7 @@ static inline unsigned int dsl_select_pos_range(unsigned int *positions, int *va
 
 void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var, int low,
         bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
-    Variable *pos = variable_lookup(client_context, pos_var);
+    Result *pos = result_lookup(client_context, pos_var);
     if (pos == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
         return;
@@ -207,7 +213,7 @@ void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var,
         return;
     }
 
-    Variable *val = variable_lookup(client_context, val_var);
+    Result *val = result_lookup(client_context, val_var);
     if (val == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
         return;
@@ -254,8 +260,7 @@ void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var,
         }
     }
 
-    variable_put(client_context, pos_out_var, POS, (VariableValues) { .pos_values = result },
-            result_count);
+    pos_result_put(client_context, pos_out_var, result, result_count);
 }
 
 void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, char *val_out_var,
@@ -266,7 +271,7 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
         return;
     }
 
-    Variable *pos = variable_lookup(client_context, pos_var);
+    Result *pos = result_lookup(client_context, pos_var);
     if (pos == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
         return;
@@ -291,8 +296,7 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
         }
     }
 
-    variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = result },
-            positions_count);
+    int_result_put(client_context, val_out_var, result, positions_count);
 }
 
 static inline void dsl_insert(Column *column, int value) {
@@ -328,12 +332,12 @@ void dsl_join(ClientContext *client_context, char *val_var1, char *pos_var1, cha
         char *pos_var2, char *pos_out_var1, char *pos_out_var2, JoinType type,
         Message *send_message);
 
-void dsl_min(ClientContext *client_context, GeneralizedColumnVariable *col_var, char *val_out_var,
+void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
     int *values;
     unsigned int values_count;
-    if (col_var->is_column_fqn) {
-        Column *column = column_lookup(col_var->name);
+    if (col_hdl->is_column_fqn) {
+        Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             return;
@@ -341,7 +345,7 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
         values = column->values.data;
         values_count = column->values.size;
     } else {
-        Variable *variable = variable_lookup(client_context, col_var->name);
+        Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
             send_message->status = VARIABLE_NOT_FOUND;
             return;
@@ -368,16 +372,15 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
     int *value_out = malloc(sizeof(int));
     *value_out = min_value;
 
-    variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = value_out },
-            1);
+    int_result_put(client_context, val_out_var, value_out, 1);
 }
 
-void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumnVariable *col_var,
+void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumnHandle *col_hdl,
         char *pos_out_var, char *val_out_var, Message *send_message) {
     unsigned int *positions;
     unsigned int positions_count;
     if (pos_var != NULL) {
-        Variable *pos = variable_lookup(client_context, pos_var);
+        Result *pos = result_lookup(client_context, pos_var);
         if (pos == NULL) {
             send_message->status = VARIABLE_NOT_FOUND;
             return;
@@ -395,8 +398,8 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 
     int *values;
     unsigned int values_count;
-    if (col_var->is_column_fqn) {
-        Column *column = column_lookup(col_var->name);
+    if (col_hdl->is_column_fqn) {
+        Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             return;
@@ -404,7 +407,7 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         values = column->values.data;
         values_count = column->values.size;
     } else {
-        Variable *variable = variable_lookup(client_context, col_var->name);
+        Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
             send_message->status = VARIABLE_NOT_FOUND;
             return;
@@ -445,21 +448,21 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 
     unsigned int *position_out = malloc(sizeof(unsigned int));
     *position_out = min_position;
-    variable_put(client_context, pos_out_var, POS, (VariableValues) { .pos_values = position_out },
-            1);
+
+    pos_result_put(client_context, pos_out_var, position_out, 1);
 
     int *value_out = malloc(sizeof(int));
     *value_out = min_value;
-    variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = value_out },
-            1);
+
+    int_result_put(client_context, val_out_var, value_out, 1);
 }
 
-void dsl_max(ClientContext *client_context, GeneralizedColumnVariable *col_var, char *val_out_var,
+void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
     int *values;
     unsigned int values_count;
-    if (col_var->is_column_fqn) {
-        Column *column = column_lookup(col_var->name);
+    if (col_hdl->is_column_fqn) {
+        Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             return;
@@ -467,7 +470,7 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
         values = column->values.data;
         values_count = column->values.size;
     } else {
-        Variable *variable = variable_lookup(client_context, col_var->name);
+        Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
             send_message->status = VARIABLE_NOT_FOUND;
             return;
@@ -494,16 +497,15 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
     int *value_out = malloc(sizeof(int));
     *value_out = max_value;
 
-    variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = value_out },
-            1);
+    int_result_put(client_context, val_out_var, value_out, 1);
 }
 
-void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumnVariable *col_var,
+void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumnHandle *col_hdl,
         char *pos_out_var, char *val_out_var, Message *send_message) {
     unsigned int *positions;
     unsigned int positions_count;
     if (pos_var != NULL) {
-        Variable *pos = variable_lookup(client_context, pos_var);
+        Result *pos = result_lookup(client_context, pos_var);
         if (pos == NULL) {
             send_message->status = VARIABLE_NOT_FOUND;
             return;
@@ -521,8 +523,8 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 
     int *values;
     unsigned int values_count;
-    if (col_var->is_column_fqn) {
-        Column *column = column_lookup(col_var->name);
+    if (col_hdl->is_column_fqn) {
+        Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             return;
@@ -530,7 +532,7 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         values = column->values.data;
         values_count = column->values.size;
     } else {
-        Variable *variable = variable_lookup(client_context, col_var->name);
+        Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
             send_message->status = VARIABLE_NOT_FOUND;
             return;
@@ -572,22 +574,20 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
     unsigned int *position_out = malloc(sizeof(unsigned int));
     *position_out = max_position;
 
-    variable_put(client_context, pos_out_var, POS, (VariableValues) { .pos_values = position_out },
-            1);
+    pos_result_put(client_context, pos_out_var, position_out, 1);
 
     int *value_out = malloc(sizeof(int));
     *value_out = max_value;
 
-    variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = value_out },
-            1);
+    int_result_put(client_context, val_out_var, value_out, 1);
 }
 
-void dsl_sum(ClientContext *client_context, GeneralizedColumnVariable *col_var, char *val_out_var,
+void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
     int *values;
     unsigned int values_count;
-    if (col_var->is_column_fqn) {
-        Column *column = column_lookup(col_var->name);
+    if (col_hdl->is_column_fqn) {
+        Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             return;
@@ -595,7 +595,7 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
         values = column->values.data;
         values_count = column->values.size;
     } else {
-        Variable *variable = variable_lookup(client_context, col_var->name);
+        Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
             send_message->status = VARIABLE_NOT_FOUND;
             return;
@@ -616,16 +616,15 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
     long long int *value_out = malloc(sizeof(long long int));
     *value_out = result;
 
-    variable_put(client_context, val_out_var, LONG, (VariableValues) { .long_values = value_out },
-            1);
+    long_result_put(client_context, val_out_var, value_out, 1);
 }
 
-void dsl_avg(ClientContext *client_context, GeneralizedColumnVariable *col_var, char *val_out_var,
+void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
     int *values;
     unsigned int values_count;
-    if (col_var->is_column_fqn) {
-        Column *column = column_lookup(col_var->name);
+    if (col_hdl->is_column_fqn) {
+        Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             return;
@@ -633,7 +632,7 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
         values = column->values.data;
         values_count = column->values.size;
     } else {
-        Variable *variable = variable_lookup(client_context, col_var->name);
+        Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
             send_message->status = VARIABLE_NOT_FOUND;
             return;
@@ -660,13 +659,12 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnVariable *col_var, 
     double *value_out = malloc(sizeof(double));
     *value_out = result;
 
-    variable_put(client_context, val_out_var, FLOAT,
-            (VariableValues) { .float_values = value_out }, 1);
+    float_result_put(client_context, val_out_var, value_out, 1);
 }
 
 void dsl_add(ClientContext *client_context, char *val_var1, char *val_var2, char *val_out_var,
         Message *send_message) {
-    Variable *variable1 = variable_lookup(client_context, val_var1);
+    Result *variable1 = result_lookup(client_context, val_var1);
     if (variable1 == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
         return;
@@ -678,7 +676,7 @@ void dsl_add(ClientContext *client_context, char *val_var1, char *val_var2, char
     int *values1 = variable1->values.int_values;
     unsigned int values1_count = variable1->num_tuples;
 
-    Variable *variable2 = variable_lookup(client_context, val_var2);
+    Result *variable2 = result_lookup(client_context, val_var2);
     if (variable2 == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
         return;
@@ -705,13 +703,12 @@ void dsl_add(ClientContext *client_context, char *val_var1, char *val_var2, char
         }
     }
 
-    variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = result },
-            values1_count);
+    int_result_put(client_context, val_out_var, result, values1_count);
 }
 
 void dsl_sub(ClientContext *client_context, char *val_var1, char *val_var2, char *val_out_var,
         Message *send_message) {
-    Variable *variable1 = variable_lookup(client_context, val_var1);
+    Result *variable1 = result_lookup(client_context, val_var1);
     if (variable1 == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
         return;
@@ -723,7 +720,7 @@ void dsl_sub(ClientContext *client_context, char *val_var1, char *val_var2, char
     int *values1 = variable1->values.int_values;
     unsigned int values1_count = variable1->num_tuples;
 
-    Variable *variable2 = variable_lookup(client_context, val_var2);
+    Result *variable2 = result_lookup(client_context, val_var2);
     if (variable2 == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
         return;
@@ -750,22 +747,21 @@ void dsl_sub(ClientContext *client_context, char *val_var1, char *val_var2, char
         }
     }
 
-    variable_put(client_context, val_out_var, INT, (VariableValues) { .int_values = result },
-            values1_count);
+    int_result_put(client_context, val_out_var, result, values1_count);
 }
 
 void dsl_print(ClientContext *client_context, Vector *val_vars, Message *send_message) {
     void **vars = val_vars->data;
     unsigned int num_columns = val_vars->size;
 
-    Variable *variables[num_columns];
+    Result *variables[num_columns];
 
     unsigned int num_tuples = 0;
 
     size_t payload_length = 2 * sizeof(unsigned int) + num_columns * sizeof(DataType);
 
     for (unsigned int i = 0; i < num_columns; i++) {
-        Variable *variable = variable_lookup(client_context, vars[i]);
+        Result *variable = result_lookup(client_context, vars[i]);
 
         if (variable == NULL) {
             send_message->status = VARIABLE_NOT_FOUND;
@@ -812,7 +808,7 @@ void dsl_print(ClientContext *client_context, Vector *val_vars, Message *send_me
     payload += sizeof(unsigned int);
 
     for (unsigned int i = 0; i < num_columns; i++) {
-        Variable *variable = variables[i];
+        Result *variable = variables[i];
         DataType type = variable->type;
 
         memcpy(payload, &type, sizeof(DataType));

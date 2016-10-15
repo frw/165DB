@@ -21,13 +21,15 @@ void log_db_operator(DbOperator *query) {
                 query->fields.create_column.table_fqn);
         break;
     case CREATE_IDX:
+        log_info("CREATE_IDX: %s, %d, %d\n", query->fields.create_index.column_fqn,
+                query->fields.create_index.type, query->fields.create_index.clustered);
         break;
     case LOAD:
         log_info("LOAD\n");
         break;
     case SELECT:
-        log_info("SELECT: %s(%d), %d(%d), %d(%d) -> %s\n", query->fields.select.col_var.name,
-                query->fields.select.col_var.is_column_fqn, query->fields.select.low,
+        log_info("SELECT: %s(%d), %d(%d), %d(%d) -> %s\n", query->fields.select.col_hdl.name,
+                query->fields.select.col_hdl.is_column_fqn, query->fields.select.low,
                 query->fields.select.has_low, query->fields.select.high,
                 query->fields.select.has_high, query->fields.select.pos_out_var);
         break;
@@ -55,31 +57,31 @@ void log_db_operator(DbOperator *query) {
     case JOIN:
         break;
     case MIN:
-        log_info("MIN: %s(%d) -> %s\n", query->fields.min.col_var.name,
-                query->fields.min.col_var.is_column_fqn, query->fields.min.val_out_var);
+        log_info("MIN: %s(%d) -> %s\n", query->fields.min.col_hdl.name,
+                query->fields.min.col_hdl.is_column_fqn, query->fields.min.val_out_var);
         break;
     case MIN_POS:
         log_info("MIN_POS: %s, %s(%d) -> %s, %s\n", query->fields.min_pos.pos_var,
-                query->fields.min_pos.col_var.name, query->fields.min_pos.col_var.is_column_fqn,
+                query->fields.min_pos.col_hdl.name, query->fields.min_pos.col_hdl.is_column_fqn,
                 query->fields.min_pos.pos_out_var, query->fields.min_pos.val_out_var);
         break;
     case MAX:
-        log_info("MAX: %s(%d) -> %s\n", query->fields.max.col_var.name,
-                query->fields.max.col_var.is_column_fqn, query->fields.max.col_var.is_column_fqn,
+        log_info("MAX: %s(%d) -> %s\n", query->fields.max.col_hdl.name,
+                query->fields.max.col_hdl.is_column_fqn, query->fields.max.col_hdl.is_column_fqn,
                 query->fields.max.val_out_var);
         break;
     case MAX_POS:
         log_info("MAX_POS: %s, %s(%d) -> %s, %s\n", query->fields.max_pos.pos_var,
-                query->fields.max_pos.col_var.name, query->fields.max_pos.col_var.is_column_fqn,
+                query->fields.max_pos.col_hdl.name, query->fields.max_pos.col_hdl.is_column_fqn,
                 query->fields.max_pos.pos_out_var, query->fields.max_pos.val_out_var);
         break;
     case SUM:
-        log_info("SUM: %s(%d) -> %s\n", query->fields.sum.col_var.name,
-                query->fields.sum.col_var.is_column_fqn, query->fields.sum.val_out_var);
+        log_info("SUM: %s(%d) -> %s\n", query->fields.sum.col_hdl.name,
+                query->fields.sum.col_hdl.is_column_fqn, query->fields.sum.val_out_var);
         break;
     case AVG:
-        log_info("AVG: %s(%d) -> %s\n", query->fields.avg.col_var.name,
-                query->fields.avg.col_var.is_column_fqn, query->fields.avg.val_out_var);
+        log_info("AVG: %s(%d) -> %s\n", query->fields.avg.col_hdl.name,
+                query->fields.avg.col_hdl.is_column_fqn, query->fields.avg.val_out_var);
         break;
     case ADD:
         log_info("ADD: %s, %s -> %s\n", query->fields.add.val_var1, query->fields.add.val_var2,
@@ -125,12 +127,14 @@ void execute_db_operator(DbOperator *query, Message *message) {
                 message);
         break;
     case CREATE_IDX:
+        dsl_create_index(query->fields.create_index.column_fqn, query->fields.create_index.type,
+                query->fields.create_index.clustered, message);
         break;
     case LOAD:
         dsl_load(&query->fields.load.file_contents, message);
         break;
     case SELECT:
-        dsl_select(query->context, &query->fields.select.col_var, query->fields.select.low,
+        dsl_select(query->context, &query->fields.select.col_hdl, query->fields.select.low,
                 query->fields.select.has_low, query->fields.select.high,
                 query->fields.select.has_high, query->fields.select.pos_out_var, message);
         break;
@@ -155,24 +159,24 @@ void execute_db_operator(DbOperator *query, Message *message) {
     case JOIN:
         break;
     case MIN:
-        dsl_min(query->context, &query->fields.min.col_var, query->fields.min.val_out_var, message);
+        dsl_min(query->context, &query->fields.min.col_hdl, query->fields.min.val_out_var, message);
         break;
     case MIN_POS:
-        dsl_min_pos(query->context, query->fields.min_pos.pos_var, &query->fields.min_pos.col_var,
+        dsl_min_pos(query->context, query->fields.min_pos.pos_var, &query->fields.min_pos.col_hdl,
                 query->fields.min_pos.pos_out_var, query->fields.min_pos.val_out_var, message);
         break;
     case MAX:
-        dsl_max(query->context, &query->fields.max.col_var, query->fields.max.val_out_var, message);
+        dsl_max(query->context, &query->fields.max.col_hdl, query->fields.max.val_out_var, message);
         break;
     case MAX_POS:
-        dsl_max_pos(query->context, query->fields.max_pos.pos_var, &query->fields.max_pos.col_var,
+        dsl_max_pos(query->context, query->fields.max_pos.pos_var, &query->fields.max_pos.col_hdl,
                 query->fields.max_pos.pos_out_var, query->fields.max_pos.val_out_var, message);
         break;
     case SUM:
-        dsl_sum(query->context, &query->fields.sum.col_var, query->fields.sum.val_out_var, message);
+        dsl_sum(query->context, &query->fields.sum.col_hdl, query->fields.sum.val_out_var, message);
         break;
     case AVG:
-        dsl_avg(query->context, &query->fields.avg.col_var, query->fields.avg.val_out_var, message);
+        dsl_avg(query->context, &query->fields.avg.col_hdl, query->fields.avg.val_out_var, message);
         break;
     case ADD:
         dsl_add(query->context, query->fields.add.val_var1, query->fields.add.val_var2,
@@ -211,12 +215,13 @@ void db_operator_free(DbOperator *query) {
         free(query->fields.create_column.table_fqn);
         break;
     case CREATE_IDX:
+        free(query->fields.create_index.column_fqn);
         break;
     case LOAD:
         vector_destroy(&query->fields.load.file_contents, (void (*)(void *)) &file_column_free);
         break;
     case SELECT:
-        free(query->fields.select.col_var.name);
+        free(query->fields.select.col_hdl.name);
         free(query->fields.select.pos_out_var);
         break;
     case SELECT_POS:
@@ -240,35 +245,31 @@ void db_operator_free(DbOperator *query) {
     case JOIN:
         break;
     case MIN:
-        free(query->fields.min.col_var.name);
+        free(query->fields.min.col_hdl.name);
         free(query->fields.min.val_out_var);
         break;
     case MIN_POS:
-        if (query->fields.min_pos.pos_var != NULL) {
-            free(query->fields.min_pos.pos_var);
-        }
-        free(query->fields.min_pos.col_var.name);
+        free(query->fields.min_pos.pos_var);
+        free(query->fields.min_pos.col_hdl.name);
         free(query->fields.min_pos.pos_out_var);
         free(query->fields.min_pos.val_out_var);
         break;
     case MAX:
-        free(query->fields.max.col_var.name);
+        free(query->fields.max.col_hdl.name);
         free(query->fields.max.val_out_var);
         break;
     case MAX_POS:
-        if (query->fields.max_pos.pos_var != NULL) {
-            free(query->fields.max_pos.pos_var);
-        }
-        free(query->fields.max_pos.col_var.name);
+        free(query->fields.max_pos.pos_var);
+        free(query->fields.max_pos.col_hdl.name);
         free(query->fields.max_pos.pos_out_var);
         free(query->fields.max_pos.val_out_var);
         break;
     case SUM:
-        free(query->fields.sum.col_var.name);
+        free(query->fields.sum.col_hdl.name);
         free(query->fields.sum.val_out_var);
         break;
     case AVG:
-        free(query->fields.avg.col_var.name);
+        free(query->fields.avg.col_hdl.name);
         free(query->fields.avg.val_out_var);
         break;
     case ADD:
