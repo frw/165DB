@@ -131,7 +131,7 @@ void execute_db_operator(DbOperator *query, Message *message) {
                 query->fields.create_index.clustered, message);
         break;
     case LOAD:
-        dsl_load(&query->fields.load.file_contents, message);
+        dsl_load(query->fields.load.col_fqns, query->fields.load.col_vals, message);
         break;
     case SELECT:
         dsl_select(query->context, &query->fields.select.col_hdl, query->fields.select.low,
@@ -218,7 +218,15 @@ void db_operator_free(DbOperator *query) {
         free(query->fields.create_index.column_fqn);
         break;
     case LOAD:
-        vector_destroy(&query->fields.load.file_contents, (void (*)(void *)) &file_column_free);
+        if (query->fields.load.col_fqns != NULL && query->fields.load.col_vals != NULL) {
+            for (unsigned int i = 0; i < query->fields.load.col_fqns->size; i++) {
+                int_vector_destroy(&query->fields.load.col_vals[i]);
+            }
+            free(query->fields.load.col_vals);
+
+            vector_destroy(query->fields.load.col_fqns, &free);
+            free(query->fields.load.col_fqns);
+        }
         break;
     case SELECT:
         free(query->fields.select.col_hdl.name);

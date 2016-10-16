@@ -42,7 +42,8 @@ typedef struct CreateIndexOperator {
  * Necessary fields for loading.
  */
 typedef struct LoadOperator {
-    Vector file_contents;
+    Vector *col_fqns;
+    IntVector *col_vals;
 } LoadOperator;
 
 /**

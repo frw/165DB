@@ -265,6 +265,8 @@ DbOperator *parse_load(char *handle, char *load_arguments, Message *message) {
 
     DbOperator *dbo = malloc(sizeof(DbOperator));
     dbo->type = LOAD;
+    dbo->fields.load.col_fqns = NULL;
+    dbo->fields.load.col_vals = NULL;
     return dbo;
 }
 

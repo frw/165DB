@@ -6,6 +6,8 @@
 
 #define SOCK_PATH "cs165_unix_socket"
 
+#define READ_BUFFER_SIZE 4096
+
 typedef enum DataType {
     POS, INT, LONG, FLOAT
 } DataType;

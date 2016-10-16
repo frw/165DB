@@ -28,15 +28,13 @@ void dsl_create_index(char *column_fqn, CreateIndexType type, bool clustered, Me
     (void) send_message;
 }
 
-void dsl_load(Vector *file_contents, Message *send_message) {
-    unsigned int num_columns = file_contents->size;
+void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
+    unsigned int num_columns = col_fqns->size;
 
     Column *columns[num_columns];
 
     for (unsigned int i = 0; i < num_columns; i++) {
-        FileColumn *file_column = file_contents->data[i];
-
-        Column *column = column_lookup(file_column->column_fqn);
+        Column *column = column_lookup(col_fqns->data[i]);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             return;
@@ -57,10 +55,7 @@ void dsl_load(Vector *file_contents, Message *send_message) {
     }
 
     for (unsigned int i = 0; i < num_columns; i++) {
-        FileColumn *file_column = file_contents->data[i];
-        Column *column = columns[i];
-
-        int_vector_concat(&column->values, &file_column->values);
+        int_vector_concat(&columns[i]->values, &col_vals[i]);
     }
 }
 

@@ -6,10 +6,10 @@ src/.settings
 # Generated files
 src/client
 src/server
-src/load_test
-src/scan_test
 src/.deps
 src/*.o
+
+datagen/gen
 
 # Data files
 src/data
