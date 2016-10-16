@@ -42,6 +42,7 @@
 
 #define DEFAULT_NUM_COLUMNS 4
 #define MINIMUM_NUM_TUPLES 1024
+#define APPROXIMATE_CHARS_PER_VALUE 10
 
 static inline bool load_file(DbOperator *dbo, MessageStatus *status) {
     int client_socket = dbo->context->client_socket;
@@ -139,13 +140,15 @@ read_loop:
                 vector_append(col_fqns, strdup(token));
             }
 
-            unsigned int initial_capacity = file_size / 10;
+            unsigned int num_columns = col_fqns->size;
+
+            unsigned int initial_capacity = file_size / num_columns / APPROXIMATE_CHARS_PER_VALUE;
             if (initial_capacity < MINIMUM_NUM_TUPLES) {
                 initial_capacity = MINIMUM_NUM_TUPLES;
             }
 
-            col_vals = malloc(col_fqns->size * sizeof(Vector));
-            for (unsigned int i = 0; i < col_fqns->size; i++) {
+            col_vals = malloc(num_columns * sizeof(Vector));
+            for (unsigned int i = 0; i < num_columns; i++) {
                 int_vector_init(&col_vals[i], initial_capacity);
             }
 

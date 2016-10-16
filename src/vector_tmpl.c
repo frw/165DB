@@ -28,7 +28,7 @@ void FUNCTION_NAME(append)(STRUCT_NAME *v, TYPE element) {
             v->capacity = 1;
             v->data = malloc(1 * sizeof(TYPE));
         } else {
-            v->capacity <<= 1;
+            v->capacity *= 2;
             v->data = realloc(v->data, v->capacity * sizeof(TYPE));
         }
     }
