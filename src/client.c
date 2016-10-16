@@ -259,20 +259,20 @@ int main(void) {
         }
 
         // Always wait for server response (even if it is just an OK message).
-        recv_and_check(client_socket, &recv_message.status, sizeof(recv_message.status), 0);
+        recv_and_check(client_socket, &recv_message.status, sizeof(recv_message.status), MSG_WAITALL);
 
         bool shutdown = (recv_message.status & SHUTDOWN_FLAG) != 0;
         recv_message.status &= ~SHUTDOWN_FLAG;
 
         if (recv_message.status == OK_WAIT_FOR_RESPONSE) {
-            recv_and_check(client_socket, &recv_message.length, sizeof(recv_message.length), 0);
+            recv_and_check(client_socket, &recv_message.length, sizeof(recv_message.length), MSG_WAITALL);
 
             if (recv_message.length > 0) {
                 // Calculate number of bytes in response package.
                 char payload[recv_message.length];
 
                 // Receive the payload and print it out.
-                recv_and_check(client_socket, payload, recv_message.length, 0);
+                recv_and_check(client_socket, payload, recv_message.length, MSG_WAITALL);
                 print_payload(payload);
             }
         } else if (recv_message.status != OK) {

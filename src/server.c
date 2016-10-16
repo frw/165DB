@@ -47,7 +47,7 @@ static inline bool load_file(DbOperator *dbo, MessageStatus *status) {
     int client_socket = dbo->context->client_socket;
 
     off_t file_size;
-    if (recv(client_socket, &file_size, sizeof(off_t), 0) == -1) {
+    if (recv(client_socket, &file_size, sizeof(off_t), MSG_WAITALL) == -1) {
         *status = COMMUNICATION_ERROR;
         return false;
     }
@@ -254,7 +254,7 @@ void handle_client(int client_socket) {
     // 3. Send status of the received message (OK, UNKNOWN_QUERY, etc)
     // 4. Send response of request.
     do {
-        length = recv(client_socket, &recv_message.length, sizeof(recv_message.length), 0);
+        length = recv(client_socket, &recv_message.length, sizeof(recv_message.length), MSG_WAITALL);
         if (length < 0) {
             log_err("Client connection closed!\n");
             break;
@@ -263,7 +263,7 @@ void handle_client(int client_socket) {
         }
 
         char recv_buffer[recv_message.length];
-        length = recv(client_socket, recv_buffer, recv_message.length, 0);
+        length = recv(client_socket, recv_buffer, recv_message.length, MSG_WAITALL);
         if (length < 0) {
             log_err("Client connection closed!\n");
             break;
