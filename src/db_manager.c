@@ -1,6 +1,7 @@
 #define _BSD_SOURCE
 
 #include <dirent.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -38,7 +39,7 @@ static inline bool column_save(Column *column, FILE *file);
 
 static inline Db *db_load(char *db_name);
 static inline Table *table_load(FILE *file);
-static inline bool column_load(Column *column, FILE *file);
+static inline bool column_load(Column *column, unsigned int order, FILE *file);
 
 static inline void db_register(Db *db);
 static inline void table_register(Table *table, char *db_name);
@@ -149,14 +150,24 @@ void column_create(char *name, char *table_fqn, Message *send_message) {
         return;
     }
 
-    Column *column = &table->columns[table->columns_count++];
+    Column *column = &table->columns[table->columns_count];
     column->name = strdup(name);
+    column->order = table->columns_count;
     int_vector_init(&column->values, COLUMN_INITIAL_CAPACITY);
     column->table = table;
+
+    table->columns_count++;
 
     hash_table_put(&db_manager_table, column_fqn, column);
 
     free(column_fqn);
+}
+
+void index_create(char *column_fqn, ColumnIndexType type, bool clustered, Message *send_message) {
+    (void) column_fqn;
+    (void) type;
+    (void) clustered;
+    (void) send_message;
 }
 
 static inline void db_free(Db *db) {
@@ -374,7 +385,7 @@ static inline Table *table_load(FILE *file) {
 
     for (unsigned int i = 0; i < columns_count; i++) {
         Column *column = &table->columns[i];
-        if (!column_load(column, file)) {
+        if (!column_load(column, i, file)) {
             table_free(table);
             table = NULL;
             break;
@@ -388,7 +399,7 @@ static inline Table *table_load(FILE *file) {
     return table;
 }
 
-static inline bool column_load(Column *column, FILE *file)  {
+static inline bool column_load(Column *column, unsigned int order, FILE *file)  {
     unsigned int name_length;
     if (fread(&name_length, sizeof(name_length), 1, file) != 1) {
         log_err("Unable to read column name length\n");
@@ -404,6 +415,8 @@ static inline bool column_load(Column *column, FILE *file)  {
     name[name_length] = '\0';
 
     column->name = name;
+
+    column->order = order;
 
     int_vector_init(&column->values, 0);
     if (!int_vector_load(&column->values, file)) {

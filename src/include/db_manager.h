@@ -8,11 +8,10 @@
 #include "message.h"
 #include "vector.h"
 
-#define MAX_TABLE_LENGTH 1024
-
 typedef struct Db Db;
 typedef struct Table Table;
 typedef struct Column Column;
+typedef struct ColumnIndex ColumnIndex;
 
 /**
  * Db
@@ -51,23 +50,37 @@ struct Table {
     Table *next;
 };
 
-typedef enum ColumnIndexType {
-    BTREE_CLUSTERED_PRINCIPAL,
-    BTREE_CLUSTERED_AUXILIARY,
-    BTREE_UNCLUSTERED,
-    SORTED_CLUSTERED_PRINCIPAL,
-    SORTED_CLUSTERED_AUXILIARY,
-    SORTED_UNCLUSTERED
-} ColumnIndexType;
-
-// struct ColumnIndex;
-
 struct Column {
     char *name;
+    unsigned int order;
     IntVector values;
-    // struct ColumnIndex *index;
-    // bool clustered;
+    ColumnIndex *index;
     Table *table;
+};
+
+typedef enum ColumnIndexType {
+    BTREE, SORTED
+} ColumnIndexType;
+
+typedef struct BTreeIndex {
+    bool dummy;
+} BTreeIndex;
+
+typedef struct SortedIndex {
+    bool dummy;
+} SortedIndex;
+
+typedef union IndexFields {
+    BTreeIndex btree;
+    SortedIndex sorted;
+} IndexFields;
+
+struct ColumnIndex {
+    ColumnIndexType type;
+    bool clustered;
+    IndexFields fields;
+    Vector *clustered_columns;
+    Column *column;
 };
 
 extern HashTable db_manager_table;
@@ -78,6 +91,7 @@ void db_manager_shutdown();
 void db_create(char *name, Message *send_message);
 void table_create(char *name, char *db_name, unsigned int num_columns, Message *send_message);
 void column_create(char *name, char *table_fqn, Message *send_message);
+void index_create(char *column_fqn, ColumnIndexType type, bool clustered, Message *send_message);
 
 static inline Db *db_lookup(char *db_name) {
     return hash_table_get(&db_manager_table, db_name);

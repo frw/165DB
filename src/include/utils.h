@@ -15,14 +15,24 @@
 #include <stdio.h>
 
 /**
+ * Finds the next highest power of two of a value.
+ */
+unsigned int round_up_power_of_two(unsigned int v);
+
+/**
  * Joins 2 strings with a separator in between.
  */
 char *strjoin(char *s1, char *s2, char sep);
 
 /**
- * Finds the next highest power of two of a value.
+ * Fast, naive string to int conversion.
  */
-unsigned int round_up_power_of_two(unsigned int v);
+int strtoi(register char *str, char **endptr);
+
+/**
+ * Fast, naive string to unsigned int conversion.
+ */
+unsigned int strtoui(register char *str, char **endptr);
 
 /**
  * Strips newline characters from a string (in place).

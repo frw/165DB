@@ -34,7 +34,7 @@ typedef struct CreateColumnOperator {
  */
 typedef struct CreateIndexOperator {
 	char *column_fqn;
-	CreateIndexType type;
+	ColumnIndexType type;
 	bool clustered;
 } CreateIndexOperator;
 

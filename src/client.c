@@ -245,9 +245,12 @@ int main(void) {
                 exit(1);
             }
 
-            if (sendfile(client_socket, load_fd, NULL, file_size) == -1) {
-                log_err("Failed to send file.\n");
-                exit(1);
+            off_t offset = 0;
+            while(offset < file_size) {
+                if(sendfile(client_socket, load_fd, &offset, file_size - offset) == -1) {
+                    log_err("Failed to send file.\n");
+                    exit(1);
+                }
             }
 
             if (send(client_socket, "\n\0\n", 3, 0) == -1) {
@@ -269,11 +272,14 @@ int main(void) {
 
             if (recv_message.length > 0) {
                 // Calculate number of bytes in response package.
-                char payload[recv_message.length];
+                char *payload = malloc(recv_message.length);
 
                 // Receive the payload and print it out.
                 recv_and_check(client_socket, payload, recv_message.length, MSG_WAITALL);
+
                 print_payload(payload);
+
+                free(payload);
             }
         } else if (recv_message.status != OK) {
             print_error(recv_message.status, interactive, line_num);

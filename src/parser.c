@@ -97,12 +97,12 @@ DbOperator *parse_create_tbl(char *create_arguments, Message *message) {
     }
 
     char *endptr;
-    unsigned int column_count = strtoul(num_cols, &endptr, 10);
+    unsigned int column_count = strtoui(num_cols, &endptr);
     if (endptr == num_cols || *endptr != '\0') {
         message->status = INCORRECT_FORMAT;
         return NULL;
     }
-    if (column_count < 1 || column_count > MAX_TABLE_LENGTH) {
+    if (column_count == 0) {
         message->status = INVALID_NUMBER_OF_COLUMNS;
         return NULL;
     }
@@ -180,7 +180,7 @@ DbOperator *parse_create_idx(char *create_arguments, Message *message) {
         return NULL;
     }
 
-    CreateIndexType type;
+    ColumnIndexType type;
     if (strcmp(index_type, "btree") == 0) {
         type = BTREE;
     } else if (strcmp(index_type, "sorted") == 0) {
@@ -276,7 +276,7 @@ static inline void parse_optional_number(char *token, int *value, bool *has_valu
         *has_value = false;
     } else {
         char *endptr;
-        int val = strtol(token, &endptr, 10);
+        int val = strtoi(token, &endptr);
         if (endptr == token || *endptr != '\0') {
             *status = INCORRECT_FORMAT;
             return;
@@ -489,7 +489,7 @@ DbOperator *parse_relational_insert(char *handle, char *insert_arguments, Messag
     char *token;
     while ((token = strsep(insert_arguments_index, ",")) != NULL) {
         char *endptr;
-        int value = strtol(token, &endptr, 10);
+        int value = strtoi(token, &endptr);
         if (endptr == token || *endptr != '\0') {
             message->status = INCORRECT_FORMAT;
             int_vector_destroy(&values);

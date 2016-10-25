@@ -44,7 +44,7 @@
 #define MINIMUM_NUM_TUPLES 1024
 #define APPROXIMATE_CHARS_PER_VALUE 10
 
-static inline bool load_file(DbOperator *dbo, MessageStatus *status) {
+bool load_file(DbOperator *dbo, MessageStatus *status) {
     int client_socket = dbo->context->client_socket;
 
     off_t file_size;
@@ -83,10 +83,13 @@ static inline bool load_file(DbOperator *dbo, MessageStatus *status) {
     char read_buffer[READ_BUFFER_SIZE];
     char *output_str = NULL;
 
+    unsigned int num_columns = 0;
+
 read_loop:
     while(output_str = fgets(read_buffer, READ_BUFFER_SIZE, file), !feof(file)) {
         if (output_str == NULL) {
             *status = COMMUNICATION_ERROR;
+            log_info("Communication error\n");
             error = true;
             break;
         }
@@ -140,14 +143,20 @@ read_loop:
                 vector_append(col_fqns, strdup(token));
             }
 
-            unsigned int num_columns = col_fqns->size;
+            num_columns = col_fqns->size;
+
+            if (num_columns == 0) {
+                *status = INCORRECT_FILE_FORMAT;
+                error = true;
+                goto read_loop;
+            }
 
             unsigned int initial_capacity = file_size / num_columns / APPROXIMATE_CHARS_PER_VALUE;
             if (initial_capacity < MINIMUM_NUM_TUPLES) {
                 initial_capacity = MINIMUM_NUM_TUPLES;
             }
 
-            col_vals = malloc(num_columns * sizeof(Vector));
+            col_vals = malloc(num_columns * sizeof(IntVector));
             for (unsigned int i = 0; i < num_columns; i++) {
                 int_vector_init(&col_vals[i], initial_capacity);
             }
@@ -158,14 +167,14 @@ read_loop:
             unsigned int i = 0;
 
             while ((token = strsep(output_str_index, ",")) != NULL) {
-                if (i >= col_fqns->size) {
+                if (i >= num_columns) {
                     *status = INCORRECT_FILE_FORMAT;
                     error = true;
                     goto read_loop;
                 }
 
                 char *endptr;
-                int value = strtol(token, &endptr, 10);
+                int value = strtoi(token, &endptr);
                 if (endptr == token || *endptr != '\0') {
                     *status = INCORRECT_FILE_FORMAT;
                     error = true;
@@ -177,17 +186,12 @@ read_loop:
                 i++;
             }
 
-            if (i < col_fqns->size) {
+            if (i < num_columns) {
                 *status = INCORRECT_FILE_FORMAT;
                 error = true;
                 goto read_loop;
             }
         }
-    }
-
-    if (col_fqns->size == 0) {
-        *status = INCORRECT_FILE_FORMAT;
-        error = true;
     }
 
     if (error) {
@@ -200,9 +204,13 @@ read_loop:
 
         vector_destroy(col_fqns, &free);
         free(col_fqns);
+
+        log_err("Error occurred when receiving load payload.\n");
     } else {
         dbo->fields.load.col_fqns = col_fqns;
         dbo->fields.load.col_vals = col_vals;
+
+        log_info("Received: %u columns, %u rows.\n", num_columns, col_vals[0].size);
     }
 
     hash_table_destroy(&name_set, NULL);
@@ -374,7 +382,7 @@ int main(void) {
 
     atexit(&tear_down_server);
 
-    log_info("Waiting for a connection %d ...\n", server_socket);
+    log_info("Bound to socket: %d.\n", server_socket);
 
     struct sockaddr_un remote;
     socklen_t t = sizeof(remote);

@@ -1,8 +1,6 @@
 #ifndef MESSAGE_H
 #define MESSAGE_H
 
-#include <stdlib.h>
-
 #define SHUTDOWN_FLAG (1 << (sizeof(MessageStatus) * 8 - 1))
 
 // MesageStatus defines the status of the previous request.

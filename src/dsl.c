@@ -21,11 +21,8 @@ void dsl_create_column(char *name, char *table_fqn, Message *send_message) {
     column_create(name, table_fqn, send_message);
 }
 
-void dsl_create_index(char *column_fqn, CreateIndexType type, bool clustered, Message *send_message) {
-    (void) column_fqn;
-    (void) type;
-    (void) clustered;
-    (void) send_message;
+void dsl_create_index(char *column_fqn, ColumnIndexType type, bool clustered, Message *send_message) {
+    index_create(column_fqn, type, clustered, send_message);
 }
 
 void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
@@ -55,7 +52,16 @@ void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
     }
 
     for (unsigned int i = 0; i < num_columns; i++) {
-        int_vector_concat(&columns[i]->values, &col_vals[i]);
+        IntVector *dst = &columns[i]->values;
+        IntVector *src = &col_vals[i];
+
+        if (dst->size == 0) {
+            int_vector_destroy(dst);
+            int_vector_shallow_copy(dst, src);
+            int_vector_init(src, 0);
+        } else {
+            int_vector_concat(&columns[i]->values, &col_vals[i]);
+        }
     }
 }
 

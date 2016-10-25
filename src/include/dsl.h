@@ -1,13 +1,12 @@
 #ifndef DSL_H
 #define DSL_H
 
+#include <stdbool.h>
+
 #include "client_context.h"
+#include "db_manager.h"
 #include "message.h"
 #include "vector.h"
-
-typedef enum CreateIndexType {
-    BTREE, SORTED
-} CreateIndexType;
 
 typedef enum JoinType {
     HASH, NESTED_LOOP
@@ -21,7 +20,7 @@ typedef struct GeneralizedColumnHandle {
 void dsl_create_db(char *name, Message *send_message);
 void dsl_create_table(char *name, char *db_name, unsigned int num_columns, Message *send_message);
 void dsl_create_column(char *name, char *table_fqn, Message *send_message);
-void dsl_create_index(char *column_fqn, CreateIndexType type, bool clustered, Message *send_message);
+void dsl_create_index(char *column_fqn, ColumnIndexType type, bool clustered, Message *send_message);
 
 void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message);
 

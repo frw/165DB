@@ -12,6 +12,18 @@
 #define ANSI_COLOR_GREEN   "\x1b[32m"
 #define ANSI_COLOR_RESET   "\x1b[0m"
 
+// Taken from https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
+unsigned int round_up_power_of_two(unsigned int v) {
+    v--;
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    v++;
+    return v;
+}
+
 char *strjoin(char *s1, char *s2, char sep) {
     size_t len1 = strlen(s1);
     size_t len2 = strlen(s2);
@@ -28,22 +40,54 @@ char *strjoin(char *s1, char *s2, char sep) {
     return result;
 }
 
-// Taken from https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
-unsigned int round_up_power_of_two(unsigned int v) {
-    v--;
-    v |= v >> 1;
-    v |= v >> 2;
-    v |= v >> 4;
-    v |= v >> 8;
-    v |= v >> 16;
-    v++;
-    return v;
+int strtoi(register char *str, char **endptr) {
+    register int acc = 0;
+    register bool neg = false;
+
+    register char c = *str;
+
+    if (c == '-') {
+        neg = true;
+        c = *++str;
+    }
+
+    for (; c >= '0' && c <= '9'; c = *++str) {
+        acc = (acc * 10) + (c - '0');
+    }
+
+    if (neg) {
+        acc = -acc;
+    }
+
+    if (endptr != NULL) {
+        *endptr = str;
+    }
+
+    return acc;
 }
 
-char *strip_newline(char *str) {
-    size_t i = 0;
-    char c;
-    for (char *itr = str; (c = *itr); itr++) {
+unsigned int strtoui(register char *str, char **endptr) {
+    register unsigned int acc = 0;
+
+    register char c = *str;
+
+    for (; c >= '0' && c <= '9'; c = *++str) {
+        acc = (acc * 10) + (c - '0');
+    }
+
+    if (endptr != NULL) {
+        *endptr = str;
+    }
+
+    return acc;
+}
+
+char *strip_newline(register char *str) {
+    register size_t i = 0;
+    register char c;
+    register char *itr;
+
+    for (itr = str; (c = *itr); itr++) {
         if (c != '\r' && c != '\n') {
             str[i++] = c;
         }
@@ -54,10 +98,12 @@ char *strip_newline(char *str) {
     return str;
 }
 
-char *strip_whitespace(char *str) {
-    size_t i = 0;
-    char c;
-    for (char *itr = str; (c = *itr); itr++) {
+char *strip_whitespace(register char *str) {
+    register size_t i = 0;
+    register char c;
+    register char *itr;
+
+    for (itr = str; (c = *itr); itr++) {
         if (!isspace(c)) {
             str[i++] = c;
         }
