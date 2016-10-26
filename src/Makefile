@@ -15,8 +15,11 @@ CC = gcc -std=c99
 # Default optimization level
 O ?= fast
 
+# CPU architecture to compile for
+ARCH = native
+
 # Flags and other libraries
-override CFLAGS += -Wall -Wextra -Werror -pedantic -fshort-enums -pthread -O$(O) -I$(INCLUDES)
+override CFLAGS += -Wall -Wextra -Werror -pedantic -fshort-enums -pthread -march=$(ARCH) -O$(O) -I$(INCLUDES)
 LDFLAGS =
 LIBS = -lm
 INCLUDES = include
