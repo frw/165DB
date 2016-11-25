@@ -10,7 +10,7 @@ debug: O = 0
 debug: all
 
 # C-compiler settings
-CC = gcc -std=c99
+CC = gcc -std=gnu99
 
 # Default optimization level
 O ?= fast
@@ -58,10 +58,10 @@ $(DEPSDIR)/stamp $(BUILDSTAMP):
 # dependency on the right side of whichever one requires the file.
 ##
 
-client: client.o common.o hash_table.o utils.o vector.o
+client: client.o hash_table.o utils.o vector.o
 	$(CC) $(CFLAGS) $(DEPCFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
-server: client_context.o common.o db_manager.o db_operator.o dsl.o hash_table.o parser.o server.o utils.o vector.o
+server: btree.o client_context.o db_manager.o db_operator.o dsl.o hash_table.o parser.o server.o sorted.o utils.o vector.o
 	$(CC) $(CFLAGS) $(DEPCFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 clean:

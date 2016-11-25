@@ -3,9 +3,11 @@
 
 #include <stdbool.h>
 
+#include "btree.h"
 #include "common.h"
 #include "hash_table.h"
 #include "message.h"
+#include "sorted.h"
 #include "vector.h"
 
 typedef struct Db Db;
@@ -62,14 +64,6 @@ typedef enum ColumnIndexType {
     BTREE, SORTED
 } ColumnIndexType;
 
-typedef struct BTreeIndex {
-    bool dummy;
-} BTreeIndex;
-
-typedef struct SortedIndex {
-    bool dummy;
-} SortedIndex;
-
 typedef union IndexFields {
     BTreeIndex btree;
     SortedIndex sorted;
@@ -79,7 +73,9 @@ struct ColumnIndex {
     ColumnIndexType type;
     bool clustered;
     IndexFields fields;
-    Vector *clustered_columns;
+    PosVector *clustered_positions;
+    IntVector *clustered_columns;
+    unsigned int num_columns;
     Column *column;
 };
 
@@ -92,6 +88,7 @@ void db_create(char *name, Message *send_message);
 void table_create(char *name, char *db_name, unsigned int num_columns, Message *send_message);
 void column_create(char *name, char *table_fqn, Message *send_message);
 void index_create(char *column_fqn, ColumnIndexType type, bool clustered, Message *send_message);
+void index_rebuild_all(Table *table);
 
 static inline Db *db_lookup(char *db_name) {
     return hash_table_get(&db_manager_table, db_name);

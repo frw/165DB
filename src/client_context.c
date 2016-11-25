@@ -16,10 +16,25 @@ void client_context_destroy(ClientContext *client_context) {
     hash_table_destroy(&client_context->results_table, (void (*)(void *)) &result_free);
 }
 
-void result_put(ClientContext *client_context, char *name, DataType type, ResultValues values, unsigned int num_tuples) {
+void result_put(ClientContext *client_context, char *name, DataType type, Column *source,
+        void *values, unsigned int num_tuples) {
     Result *result = malloc(sizeof(Result));
     result->type = type;
-    result->values = values;
+    result->source = source;
+    switch (type) {
+    case POS:
+        result->values.pos_values = values;
+        break;
+    case INT:
+        result->values.int_values = values;
+        break;
+    case LONG:
+        result->values.long_values = values;
+        break;
+    case FLOAT:
+        result->values.float_values = values;
+        break;
+    }
     result->num_tuples = num_tuples;
 
     Result *removed = hash_table_put(&client_context->results_table, name, result);

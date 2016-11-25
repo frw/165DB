@@ -29,6 +29,7 @@ void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
     unsigned int num_columns = col_fqns->size;
 
     Column *columns[num_columns];
+    Table *table = NULL;
 
     for (unsigned int i = 0; i < num_columns; i++) {
         Column *column = column_lookup(col_fqns->data[i]);
@@ -39,7 +40,8 @@ void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
             columns[i] = column;
 
             if (i == 0) {
-                Table *table = column->table;
+                table = column->table;
+
                 if (num_columns != table->columns_capacity) {
                     send_message->status = INSERT_COLUMNS_MISMATCH;
                     return;
@@ -63,6 +65,8 @@ void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
             int_vector_concat(&columns[i]->values, &col_vals[i]);
         }
     }
+
+    index_rebuild_all(table);
 }
 
 static inline unsigned int dsl_select_lower(int *values, unsigned int values_count, int high,
@@ -108,16 +112,20 @@ static inline unsigned int dsl_select_range(int *values, unsigned int values_cou
 
 void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, int low,
         bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
+    Column *source;
     int *values;
     unsigned int values_count;
+    ColumnIndex *index;
     if (col_hdl->is_column_fqn) {
         Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
+        source = column;
         values = column->values.data;
         values_count = column->values.size;
+        index = column->index;
     } else {
         Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
@@ -128,26 +136,48 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+        source = variable->source;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
+        index = NULL;
     }
 
-    unsigned int *result;
-    unsigned int result_count;
-    if (values_count == 0 || (has_low && has_high && low >= high)) {
-        result = NULL;
-        result_count = 0;
-    } else {
+    unsigned int *result = NULL;
+    unsigned int result_count = 0;
+    if (values_count > 0 && (!has_low || !has_high || low < high)) {
         result = malloc(values_count * sizeof(unsigned int));
 
-        if (!has_low) {
-            result_count = dsl_select_lower(values, values_count, high, result);
-        } else if (!has_high) {
-            result_count = dsl_select_higher(values, values_count, low, result);
-        } else if (low == high - 1) {
-            result_count = dsl_select_equal(values, values_count, low, result);
+        if (index == NULL) {
+            if (!has_low) {
+                result_count = dsl_select_lower(values, values_count, high, result);
+            } else if (!has_high) {
+                result_count = dsl_select_higher(values, values_count, low, result);
+            } else if (low == high - 1) {
+                result_count = dsl_select_equal(values, values_count, low, result);
+            } else {
+                result_count = dsl_select_range(values, values_count, low, high, result);
+            }
         } else {
-            result_count = dsl_select_range(values, values_count, low, high, result);
+            switch (index->type) {
+            case BTREE:
+                if (!has_low) {
+                    result_count = btree_select_lower(&index->fields.btree, high, result);
+                } else if (!has_high) {
+                    result_count = btree_select_higher(&index->fields.btree, low, result);
+                } else {
+                    result_count = btree_select_range(&index->fields.btree, low, high, result);
+                }
+                break;
+            case SORTED:
+                if (!has_low) {
+                    result_count = sorted_select_lower(&index->fields.sorted, high, result);
+                } else if (!has_high) {
+                    result_count = sorted_select_higher(&index->fields.sorted, low, result);
+                } else {
+                    result_count = sorted_select_range(&index->fields.sorted, low, high, result);
+                }
+                break;
+            }
         }
 
         if (result_count == 0) {
@@ -158,7 +188,7 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
         }
     }
 
-    pos_result_put(client_context, pos_out_var, result, result_count);
+    pos_result_put(client_context, pos_out_var, source, result, result_count);
 }
 
 static inline unsigned int dsl_select_pos_lower(unsigned int *positions, int *values,
@@ -235,12 +265,9 @@ void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var,
         return;
     }
 
-    unsigned int *result;
-    unsigned int result_count;
-    if (values_count == 0 || (has_low && has_high && low >= high)) {
-        result = NULL;
-        result_count = 0;
-    } else {
+    unsigned int *result = NULL;
+    unsigned int result_count = 0;
+    if (values_count > 0 && (!has_low || !has_high || low < high)) {
         result = malloc(values_count * sizeof(unsigned int));
 
         if (!has_low) {
@@ -261,7 +288,7 @@ void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var,
         }
     }
 
-    pos_result_put(client_context, pos_out_var, result, result_count);
+    pos_result_put(client_context, pos_out_var, pos->source, result, result_count);
 }
 
 void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, char *val_out_var,
@@ -282,15 +309,20 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
         return;
     }
 
-    int *values = column->values.data;
-
     unsigned int *positions = pos->values.pos_values;
     unsigned int positions_count = pos->num_tuples;
 
-    int *result;
-    if (positions_count == 0) {
-        result = NULL;
-    } else {
+    int *result = NULL;
+    if (positions_count > 0) {
+        ColumnIndex *source_index = pos->source->index;
+
+        int *values;
+        if (source_index != NULL && source_index->clustered) {
+            values = source_index->clustered_columns[column->order].data;
+        } else {
+            values = column->values.data;
+        }
+
         result = malloc(positions_count * sizeof(int));
         for (unsigned int i = 0; i < positions_count; i++) {
             result[i] = values[positions[i]];
@@ -300,8 +332,43 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
     int_result_put(client_context, val_out_var, result, positions_count);
 }
 
-static inline void dsl_insert(Column *column, int value) {
+static inline void dsl_insert(Column *column, IntVector *values) {
+    int value = values->data[column->order];
+
     int_vector_append(&column->values, value);
+
+    ColumnIndex *index = column->index;
+    if (index != NULL) {
+        if (index->clustered) {
+            unsigned int position;
+
+            switch (index->type) {
+            case BTREE:
+                btree_insert(&index->fields.btree, value, &position);
+                break;
+            case SORTED:
+                sorted_insert(&index->fields.sorted, value, &position);
+                break;
+            }
+
+            pos_vector_insert(index->clustered_positions, position, column->values.size - 1);
+
+            for (unsigned int i = 0; i < values->size; i++) {
+                int_vector_insert(index->clustered_columns + i, position, values->data[i]);
+            }
+        } else {
+            unsigned int position = column->values.size - 1;
+
+            switch (index->type) {
+            case BTREE:
+                btree_insert(&index->fields.btree, value, &position);
+                break;
+            case SORTED:
+                sorted_insert(&index->fields.sorted, value, &position);
+                break;
+            }
+        }
+    }
 }
 
 void dsl_relational_insert(char *table_fqn, IntVector *values, Message *send_message) {
@@ -319,8 +386,8 @@ void dsl_relational_insert(char *table_fqn, IntVector *values, Message *send_mes
         return;
     }
 
-    for (unsigned int i = 0; i < values->size; i++) {
-        dsl_insert(&table->columns[i], values->data[i]);
+    for (unsigned int i = 0; i < table->columns_capacity; i++) {
+        dsl_insert(&table->columns[i], values);
     }
 }
 
@@ -337,6 +404,7 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         Message *send_message) {
     int *values;
     unsigned int values_count;
+    ColumnIndex *index;
     if (col_hdl->is_column_fqn) {
         Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
@@ -345,6 +413,7 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         }
         values = column->values.data;
         values_count = column->values.size;
+        index = column->index;
     } else {
         Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
@@ -357,6 +426,7 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         }
         values = variable->values.int_values;
         values_count = variable->num_tuples;
+        index = NULL;
     }
 
     if (values_count == 0) {
@@ -364,10 +434,23 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         return;
     }
 
-    int min_value = values[0];
-    for (unsigned int i = 1; i < values_count; i++) {
-        int value = values[i];
-        min_value = value < min_value ? value : min_value;
+    int min_value = 0;
+    if (index == NULL) {
+        min_value = values[0];
+
+        for (unsigned int i = 1; i < values_count; i++) {
+            int value = values[i];
+            min_value = value < min_value ? value : min_value;
+        }
+    } else {
+        switch (index->type) {
+        case BTREE:
+            min_value = btree_min(&index->fields.btree, NULL);
+            break;
+        case SORTED:
+            min_value = sorted_min(&index->fields.sorted, NULL);
+            break;
+        }
     }
 
     int *value_out = malloc(sizeof(int));
@@ -378,6 +461,8 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 
 void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumnHandle *col_hdl,
         char *pos_out_var, char *val_out_var, Message *send_message) {
+    Column *source = NULL;
+
     unsigned int *positions;
     unsigned int positions_count;
     if (pos_var != NULL) {
@@ -390,6 +475,7 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+        source = pos->source;
         positions = pos->values.pos_values;
         positions_count = pos->num_tuples;
     } else {
@@ -399,14 +485,17 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 
     int *values;
     unsigned int values_count;
+    ColumnIndex *index;
     if (col_hdl->is_column_fqn) {
         Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
+        source = column;
         values = column->values.data;
         values_count = column->values.size;
+        index = column->index;
     } else {
         Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
@@ -419,6 +508,7 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         }
         values = variable->values.int_values;
         values_count = variable->num_tuples;
+        index = NULL;
     }
 
     if (values_count == 0) {
@@ -426,31 +516,44 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         return;
     }
 
-    if (positions != NULL && positions_count != values_count) {
-        send_message->status = TUPLE_COUNT_MISMATCH;
-        return;
-    }
-
     unsigned int min_position = 0;
-    int min_value = values[0];
+    int min_value = 0;
+    if (index == NULL) {
+        if (positions != NULL && positions_count != values_count) {
+            send_message->status = TUPLE_COUNT_MISMATCH;
+            return;
+        }
 
-    for (unsigned int i = 1; i < values_count; i++) {
-        int value = values[i];
+        min_position = 0;
+        min_value = values[0];
 
-        bool smaller = value < min_value;
+        for (unsigned int i = 1; i < values_count; i++) {
+            int value = values[i];
 
-        min_position = smaller ? i : min_position;
-        min_value = smaller ? value : min_value;
-    }
+            bool smaller = value < min_value;
 
-    if (positions != NULL) {
-        min_position = positions[min_position];
+            min_position = smaller ? i : min_position;
+            min_value = smaller ? value : min_value;
+        }
+
+        if (positions != NULL) {
+            min_position = positions[min_position];
+        }
+    } else {
+        switch (index->type) {
+        case BTREE:
+            min_value = btree_min(&index->fields.btree, &min_position);
+            break;
+        case SORTED:
+            min_value = sorted_min(&index->fields.sorted, &min_position);
+            break;
+        }
     }
 
     unsigned int *position_out = malloc(sizeof(unsigned int));
     *position_out = min_position;
 
-    pos_result_put(client_context, pos_out_var, position_out, 1);
+    pos_result_put(client_context, pos_out_var, source, position_out, 1);
 
     int *value_out = malloc(sizeof(int));
     *value_out = min_value;
@@ -462,6 +565,7 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         Message *send_message) {
     int *values;
     unsigned int values_count;
+    ColumnIndex *index;
     if (col_hdl->is_column_fqn) {
         Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
@@ -470,6 +574,7 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         }
         values = column->values.data;
         values_count = column->values.size;
+        index = column->index;
     } else {
         Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
@@ -482,6 +587,7 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         }
         values = variable->values.int_values;
         values_count = variable->num_tuples;
+        index = NULL;
     }
 
     if (values_count == 0) {
@@ -489,10 +595,23 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         return;
     }
 
-    int max_value = values[0];
-    for (unsigned int i = 1; i < values_count; i++) {
-        int value = values[i];
-        max_value = value > max_value ? value : max_value;
+    int max_value = 0;
+    if (index == NULL) {
+        max_value = values[0];
+
+        for (unsigned int i = 1; i < values_count; i++) {
+            int value = values[i];
+            max_value = value > max_value ? value : max_value;
+        }
+    } else {
+        switch (index->type) {
+        case BTREE:
+            max_value = btree_max(&index->fields.btree, NULL);
+            break;
+        case SORTED:
+            max_value = sorted_max(&index->fields.sorted, NULL);
+            break;
+        }
     }
 
     int *value_out = malloc(sizeof(int));
@@ -503,6 +622,8 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 
 void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumnHandle *col_hdl,
         char *pos_out_var, char *val_out_var, Message *send_message) {
+    Column *source = NULL;
+
     unsigned int *positions;
     unsigned int positions_count;
     if (pos_var != NULL) {
@@ -515,6 +636,7 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+        source = pos->source;
         positions = pos->values.pos_values;
         positions_count = pos->num_tuples;
     } else {
@@ -524,14 +646,17 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 
     int *values;
     unsigned int values_count;
+    ColumnIndex *index;
     if (col_hdl->is_column_fqn) {
         Column *column = column_lookup(col_hdl->name);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
+        source = column;
         values = column->values.data;
         values_count = column->values.size;
+        index = column->index;
     } else {
         Result *variable = result_lookup(client_context, col_hdl->name);
         if (variable == NULL) {
@@ -544,6 +669,7 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         }
         values = variable->values.int_values;
         values_count = variable->num_tuples;
+        index = NULL;
     }
 
     if (values_count == 0) {
@@ -551,31 +677,44 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         return;
     }
 
-    if (positions != NULL && positions_count != values_count) {
-        send_message->status = TUPLE_COUNT_MISMATCH;
-        return;
-    }
-
     unsigned int max_position = 0;
-    int max_value = values[0];
+    int max_value = 0;
+    if (index == NULL) {
+        if (positions != NULL && positions_count != values_count) {
+            send_message->status = TUPLE_COUNT_MISMATCH;
+            return;
+        }
 
-    for (unsigned int i = 1; i < values_count; i++) {
-        int value = values[i];
+        max_position = 0;
+        max_value = values[0];
 
-        bool larger = value > max_value;
+        for (unsigned int i = 1; i < values_count; i++) {
+            int value = values[i];
 
-        max_position = larger ? i : max_position;
-        max_value = larger ? value : max_value;
-    }
+            bool larger = value > max_value;
 
-    if (positions != NULL) {
-        max_position = positions[max_position];
+            max_position = larger ? i : max_position;
+            max_value = larger ? value : max_value;
+        }
+
+        if (positions != NULL) {
+            max_position = positions[max_position];
+        }
+    } else {
+        switch (index->type) {
+        case BTREE:
+            max_value = btree_max(&index->fields.btree, &max_position);
+            break;
+        case SORTED:
+            max_value = sorted_max(&index->fields.sorted, &max_position);
+            break;
+        }
     }
 
     unsigned int *position_out = malloc(sizeof(unsigned int));
     *position_out = max_position;
 
-    pos_result_put(client_context, pos_out_var, position_out, 1);
+    pos_result_put(client_context, pos_out_var, source, position_out, 1);
 
     int *value_out = malloc(sizeof(int));
     *value_out = max_value;
@@ -694,10 +833,8 @@ void dsl_add(ClientContext *client_context, char *val_var1, char *val_var2, char
         return;
     }
 
-    int *result;
-    if (values1_count == 0) {
-        result = NULL;
-    } else {
+    int *result = NULL;
+    if (values1_count > 0) {
         result = malloc(values1_count * sizeof(int));
         for (unsigned int i = 0; i < values1_count; i++) {
             result[i] = values1[i] + values2[i];
@@ -738,10 +875,8 @@ void dsl_sub(ClientContext *client_context, char *val_var1, char *val_var2, char
         return;
     }
 
-    int *result;
-    if (values1_count == 0) {
-        result = NULL;
-    } else {
+    int *result = NULL;
+    if (values1_count > 0) {
         result = malloc(values1_count * sizeof(int));
         for (unsigned int i = 0; i < values1_count; i++) {
             result[i] = values1[i] - values2[i];

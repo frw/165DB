@@ -14,6 +14,33 @@
 #include <stdint.h>
 #include <stdio.h>
 
+typedef struct Record {
+    int value;
+    unsigned int position;
+} Record;
+
+/**
+ * Sorts an array of integers in ascending order.
+ */
+void radix_sort(int *values, size_t size);
+
+/**
+ * Sorts an array of integers in ascending order, and stores the indices corresponding to the original array.
+ */
+void radix_sort_indices(int *values, unsigned int *indices, size_t size);
+
+/**
+ * Binary searches through a sorted array of values, returning the position of the left-most
+ * element that is >= value.
+ */
+unsigned int binary_search_left(register int *values, unsigned int size, register int value);
+
+/**
+ * Binary searches through a sorted array of values, returning the position of the left-most
+ * element that is > value.
+ */
+unsigned int binary_search_right(register int *values, unsigned int size, register int value);
+
 /**
  * Finds the next highest power of two of a value.
  */

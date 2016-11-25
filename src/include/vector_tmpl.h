@@ -12,9 +12,13 @@ void FUNCTION_NAME(ensure_capacity)(STRUCT_NAME *v, unsigned int minimum_capacit
 
 void FUNCTION_NAME(append)(STRUCT_NAME *v, TYPE element);
 
+void FUNCTION_NAME(insert)(STRUCT_NAME *v, unsigned int idx, TYPE element);
+
 void FUNCTION_NAME(concat)(STRUCT_NAME *dst, STRUCT_NAME *src);
 
 void FUNCTION_NAME(shallow_copy)(STRUCT_NAME *dst, STRUCT_NAME *src);
+
+void FUNCTION_NAME(deep_copy)(STRUCT_NAME *dst, STRUCT_NAME *src);
 
 #ifdef POINTER_TYPE
 

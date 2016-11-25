@@ -32,14 +32,17 @@ HashTable db_manager_table;
 static inline void db_free(Db *db);
 static inline void table_free(Table *table);
 static inline void column_free(Column *column);
+static inline void index_free(ColumnIndex *index);
 
 static inline bool db_save(Db *db);
 static inline bool table_save(Table *table, FILE *file);
 static inline bool column_save(Column *column, FILE *file);
+static inline bool index_save(ColumnIndex *index, FILE *file);
 
 static inline Db *db_load(char *db_name);
 static inline Table *table_load(FILE *file);
 static inline bool column_load(Column *column, unsigned int order, FILE *file);
+static inline ColumnIndex *index_load(FILE *file);
 
 static inline void db_register(Db *db);
 static inline void table_register(Table *table, char *db_name);
@@ -154,6 +157,7 @@ void column_create(char *name, char *table_fqn, Message *send_message) {
     column->name = strdup(name);
     column->order = table->columns_count;
     int_vector_init(&column->values, COLUMN_INITIAL_CAPACITY);
+    column->index = NULL;
     column->table = table;
 
     table->columns_count++;
@@ -163,11 +167,144 @@ void column_create(char *name, char *table_fqn, Message *send_message) {
     free(column_fqn);
 }
 
+static ColumnIndex *index_create_internal(Column *column, ColumnIndexType type, bool clustered) {
+    ColumnIndex *index = malloc(sizeof(ColumnIndex));
+    index->type = type;
+    index->clustered = clustered;
+    index->column = column;
+
+    unsigned int size = column->values.size;
+
+    if (clustered) {
+        Table *table = column->table;
+        unsigned int num_columns = table->columns_capacity;
+
+        index->clustered_positions = malloc(sizeof(PosVector));
+        index->clustered_columns = malloc(num_columns * sizeof(IntVector));
+        index->num_columns = num_columns;
+
+        if (size == 0) {
+            pos_vector_init(index->clustered_positions, 0);
+
+            for (unsigned int i = 0; i < num_columns; i++) {
+                int_vector_init(index->clustered_columns + i, 0);
+            }
+
+            switch (type) {
+            case BTREE:
+                btree_init(&index->fields.btree, true, NULL, NULL, 0);
+                break;
+            case SORTED:
+                sorted_init(&index->fields.sorted, true, NULL, NULL, 0);
+                break;
+            }
+        } else {
+            IntVector *leading_values_vector = index->clustered_columns + column->order;
+            int_vector_deep_copy(leading_values_vector, &column->values);
+            int *leading_values = leading_values_vector->data;
+
+            PosVector *positions_vector = index->clustered_positions;
+            pos_vector_init(positions_vector, leading_values_vector->capacity);
+            unsigned int *sorted_positions = positions_vector->data;
+
+            radix_sort_indices(leading_values, sorted_positions, size);
+
+            positions_vector->size = size;
+
+            for (unsigned int i = 0; i < num_columns; i++) {
+                if (i != column->order) {
+                    IntVector *values_vector = index->clustered_columns + i;
+                    int_vector_init(values_vector, leading_values_vector->capacity);
+
+                    int *sorted_values = values_vector->data;
+                    int *unsorted_values = table->columns[i].values.data;
+
+                    for (unsigned int j = 0; j < size; j++) {
+                        sorted_values[j] = unsorted_values[sorted_positions[j]];
+                    }
+
+                    values_vector->size = size;
+                }
+            }
+
+            switch (type) {
+            case BTREE:
+                btree_init(&index->fields.btree, true, leading_values, NULL, size);
+                break;
+            case SORTED:
+                sorted_init(&index->fields.sorted, true, leading_values, NULL, size);
+                break;
+            }
+        }
+    } else {
+        index->clustered_positions = NULL;
+        index->clustered_columns = NULL;
+        index->num_columns = 0;
+
+        if (size == 0) {
+            switch (type) {
+            case BTREE:
+                btree_init(&index->fields.btree, false, NULL, NULL, 0);
+                break;
+            case SORTED:
+                sorted_init(&index->fields.sorted, false, NULL, NULL, 0);
+                break;
+            }
+        } else {
+            int *values = malloc(size * sizeof(int));
+            memcpy(values, column->values.data, size * sizeof(int));
+
+            unsigned int *positions = malloc(size * sizeof(unsigned int));
+
+            radix_sort_indices(values, positions, size);
+
+            switch (type) {
+            case BTREE:
+                btree_init(&index->fields.btree, false, values, positions, size);
+                break;
+            case SORTED:
+                sorted_init(&index->fields.sorted, false, values, positions, size);
+                break;
+            }
+
+            free(values);
+            free(positions);
+        }
+    }
+
+    return index;
+}
+
 void index_create(char *column_fqn, ColumnIndexType type, bool clustered, Message *send_message) {
-    (void) column_fqn;
-    (void) type;
-    (void) clustered;
-    (void) send_message;
+    Column *column = column_lookup(column_fqn);
+    if (column == NULL) {
+        send_message->status = COLUMN_NOT_FOUND;
+        return;
+    }
+
+    if (column->index != NULL) {
+        send_message->status = INDEX_ALREADY_EXISTS;
+        return;
+    }
+
+    column->index = index_create_internal(column, type, clustered);
+}
+
+void index_rebuild_all(Table *table) {
+    for (unsigned int i = 0; i < table->columns_count; i++) {
+        Column *column = table->columns + i;
+
+        if (column->index != NULL) {
+            ColumnIndex *index = column->index;
+
+            ColumnIndexType type = index->type;
+            bool clustered = index->clustered;
+
+            index_free(index);
+
+            column->index = index_create_internal(column, type, clustered);
+        }
+    }
 }
 
 static inline void db_free(Db *db) {
@@ -191,6 +328,36 @@ static inline void table_free(Table *table) {
 static inline void column_free(Column *column) {
     free(column->name);
     int_vector_destroy(&column->values);
+    if (column->index != NULL) {
+        index_free(column->index);
+    }
+}
+
+static inline void index_free(ColumnIndex *index) {
+    switch (index->type) {
+    case BTREE:
+        btree_destroy(&index->fields.btree);
+        break;
+    case SORTED:
+        sorted_destroy(&index->fields.sorted);
+        break;
+    }
+
+    if (index->clustered) {
+        if (index->clustered_positions != NULL) {
+            pos_vector_destroy(index->clustered_positions);
+            free(index->clustered_positions);
+        }
+
+        if (index->clustered_columns != NULL) {
+            for (unsigned int i = 0; i < index->num_columns; i++) {
+                int_vector_destroy(index->clustered_columns + i);
+            }
+            free(index->clustered_columns);
+        }
+    }
+
+    free(index);
 }
 
 static inline bool db_save(Db *db) {
@@ -291,9 +458,63 @@ static inline bool column_save(Column *column, FILE *file) {
         return false;
     }
 
+    bool has_index = column->index != NULL;
+
+    if (fwrite(&has_index, sizeof(has_index), 1, file) != 1) {
+        log_err("Unable to write column has_index\n");
+        return false;
+    }
+
+    if (has_index && !index_save(column->index, file)) {
+        return false;
+    }
+
     return true;
 }
 
+static inline bool index_save(ColumnIndex *index, FILE *file) {
+    if (fwrite(&index->type, sizeof(index->type), 1, file) != 1) {
+        log_err("Unable to write index type\n");
+        return false;
+    }
+
+    if (fwrite(&index->clustered, sizeof(index->clustered), 1, file) != 1) {
+        log_err("Unable to write index clustered\n");
+        return false;
+    }
+
+    switch (index->type) {
+    case BTREE:
+        if (!btree_save(&index->fields.btree, file)) {
+            return false;
+        }
+        break;
+    case SORTED:
+        if (!sorted_save(&index->fields.sorted, file)) {
+            return false;
+        }
+        break;
+    }
+
+    if (index->clustered) {
+        if (!pos_vector_save(index->clustered_positions, file)) {
+            return false;
+        }
+
+        if (fwrite(&index->num_columns, sizeof(index->num_columns), 1, file) != 1) {
+            log_err("Unable to write index num_columns\n");
+            return false;
+        }
+
+        for (unsigned int i = 0; i < index->num_columns; i++) {
+            if (!int_vector_save(index->clustered_columns + i, file)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
 
 static inline Db *db_load(char *db_name) {
     char path[MAX_PATH_LENGTH];
@@ -415,17 +636,101 @@ static inline bool column_load(Column *column, unsigned int order, FILE *file)  
     name[name_length] = '\0';
 
     column->name = name;
-
     column->order = order;
-
     int_vector_init(&column->values, 0);
+    column->index = NULL;
+
     if (!int_vector_load(&column->values, file)) {
         log_err("Unable to read column values\n");
         column_free(column);
         return false;
     }
 
+    bool has_index;
+
+    if (fread(&has_index, sizeof(has_index), 1, file) != 1) {
+        log_err("Unable to read column has_index\n");
+        column_free(column);
+        return false;
+    }
+
+    if (has_index) {
+        ColumnIndex *index = index_load(file);
+        if (index == NULL) {
+            column_free(column);
+            return false;
+        }
+
+        index->column = column;
+
+        column->index = index;
+    }
+
     return true;
+}
+
+static inline ColumnIndex *index_load(FILE *file) {
+    ColumnIndexType type;
+    if (fread(&type, sizeof(type), 1, file) != 1) {
+        log_err("Unable to read index type\n");
+        return NULL;
+    }
+
+    bool clustered;
+    if (fread(&clustered, sizeof(clustered), 1, file) != 1) {
+        log_err("Unable to read index clustered\n");
+        return NULL;
+    }
+
+    IndexFields fields;
+    switch (type) {
+    case BTREE:
+        if (!btree_load(&fields.btree, file)) {
+            return false;
+        }
+        break;
+    case SORTED:
+        if (!sorted_load(&fields.sorted, file)) {
+            return false;
+        }
+        break;
+    }
+
+    ColumnIndex *index = malloc(sizeof(ColumnIndex));
+    index->type = type;
+    index->clustered = clustered;
+    index->fields = fields;
+    index->clustered_positions = NULL;
+    index->clustered_columns = NULL;
+    index->num_columns = 0;
+
+    if (clustered) {
+        index->clustered_positions = malloc(sizeof(PosVector));
+        pos_vector_init(index->clustered_positions, 0);
+        if (!pos_vector_load(index->clustered_positions, file)) {
+            index_free(index);
+            return NULL;
+        }
+
+        if (fread(&index->num_columns, sizeof(index->num_columns), 1, file) != 1) {
+            log_err("Unable to read index num_columns\n");
+            index_free(index);
+            return false;
+        }
+
+        index->clustered_columns = malloc(index->num_columns * sizeof(IntVector));
+        for (unsigned int i = 0; i < index->num_columns; i++) {
+            int_vector_init(index->clustered_columns + i, 0);
+        }
+        for (unsigned int i = 0; i < index->num_columns; i++) {
+            if (!int_vector_load(index->clustered_columns + i, file)) {
+                index_free(index);
+                return NULL;
+            }
+        }
+    }
+
+    return index;
 }
 
 static inline void db_register(Db *db) {

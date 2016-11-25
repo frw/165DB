@@ -29,4 +29,15 @@
 #undef FUNCTION_NAME
 #undef TYPE
 
+// Vector containing unsigned int positions.
+#define STRUCT_NAME PosVector
+#define FUNCTION_NAME(x) pos_vector_##x
+#define TYPE unsigned int
+
+#include "vector_tmpl.h"
+
+#undef STRUCT_NAME
+#undef FUNCTION_NAME
+#undef TYPE
+
 #endif /* VECTOR_H */

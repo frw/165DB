@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include "vector.h"
@@ -19,6 +22,17 @@
 #define STRUCT_NAME IntVector
 #define FUNCTION_NAME(x) int_vector_##x
 #define TYPE int
+
+#include "vector_tmpl.c"
+
+#undef STRUCT_NAME
+#undef FUNCTION_NAME
+#undef TYPE
+
+// Vector containing unsigned int positionss.
+#define STRUCT_NAME PosVector
+#define FUNCTION_NAME(x) pos_vector_##x
+#define TYPE unsigned int
 
 #include "vector_tmpl.c"
 

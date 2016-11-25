@@ -572,6 +572,11 @@ DbOperator *parse_min(char *handle, char *max_arguments, Message *message) {
             return NULL;
         }
 
+        if ((pos_var == NULL) ^ is_column_fqn) {
+            message->status = QUERY_UNSUPPORTED;
+            return NULL;
+        }
+
         char *pos_out_var = next_token(&handle, ",", status, WRONG_NUMBER_OF_HANDLES);
         char *val_out_var = next_token(&handle, ",", status, WRONG_NUMBER_OF_HANDLES);
 
@@ -666,6 +671,11 @@ DbOperator *parse_max(char *handle, char *max_arguments, Message *message) {
             is_column_fqn = true;
         } else {
             message->status = INCORRECT_FORMAT;
+            return NULL;
+        }
+
+        if ((pos_var == NULL) ^ is_column_fqn) {
+            message->status = QUERY_UNSUPPORTED;
             return NULL;
         }
 

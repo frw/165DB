@@ -10,29 +10,39 @@ void FUNCTION_NAME(init)(STRUCT_NAME *v, unsigned int initial_capacity) {
     v->capacity = initial_capacity;
 }
 
+static inline void FUNCTION_NAME(set_capacity)(STRUCT_NAME *v, unsigned int capacity) {
+    if (v->data == NULL) {
+        v->data = malloc(capacity * sizeof(TYPE));
+    } else {
+        v->data = realloc(v->data, capacity * sizeof(TYPE));
+    }
+    v->capacity = capacity;
+}
+
 void FUNCTION_NAME(ensure_capacity)(STRUCT_NAME *v, unsigned int minimum_capacity) {
-    minimum_capacity = v->size > minimum_capacity ? v->size : minimum_capacity;
     if (v->capacity < minimum_capacity) {
-        if (v->data == NULL) {
-            v->data = malloc(minimum_capacity * sizeof(TYPE));
-        } else {
-            v->data = realloc(v->data, minimum_capacity * sizeof(TYPE));
-        }
-        v->capacity = minimum_capacity;
+        FUNCTION_NAME(set_capacity)(v, minimum_capacity);
     }
 }
 
 void FUNCTION_NAME(append)(STRUCT_NAME *v, TYPE element) {
     if (v->size == v->capacity) {
-        if (v->capacity == 0) {
-            v->capacity = 1;
-            v->data = malloc(1 * sizeof(TYPE));
-        } else {
-            v->capacity *= 2;
-            v->data = realloc(v->data, v->capacity * sizeof(TYPE));
-        }
+        FUNCTION_NAME(set_capacity)(v, v->capacity == 0 ? 1 : v->capacity * 2);
     }
+
     v->data[v->size++] = element;
+}
+
+void FUNCTION_NAME(insert)(STRUCT_NAME *v, unsigned int idx, TYPE element) {
+    if (v->size == v->capacity) {
+        FUNCTION_NAME(set_capacity)(v, v->capacity == 0 ? 1 : v->capacity * 2);
+    }
+
+    if (idx < v->size) {
+        memmove(v->data + idx + 1, v->data + idx, (v->size - idx) * sizeof(TYPE));
+    }
+    v->data[idx] = element;
+    v->size++;
 }
 
 void FUNCTION_NAME(concat)(STRUCT_NAME *dst, STRUCT_NAME *src) {
@@ -44,6 +54,13 @@ void FUNCTION_NAME(concat)(STRUCT_NAME *dst, STRUCT_NAME *src) {
 
 void FUNCTION_NAME(shallow_copy)(STRUCT_NAME *dst, STRUCT_NAME *src) {
     dst->data = src->data;
+    dst->size = src->size;
+    dst->capacity = src->capacity;
+}
+
+void FUNCTION_NAME(deep_copy)(STRUCT_NAME *dst, STRUCT_NAME *src) {
+    dst->data = malloc(src->capacity * sizeof(TYPE));
+    memcpy(dst->data, src->data, src->size * sizeof(TYPE));
     dst->size = src->size;
     dst->capacity = src->capacity;
 }

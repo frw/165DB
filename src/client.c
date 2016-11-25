@@ -68,7 +68,7 @@ static inline ssize_t recv_and_check(int sockfd, void *buf, size_t len, int flag
         log_err("Failed to receive message.\n");
         exit(1);
     } else if (received == 0) {
-        log_info("Server closed connection.\n");
+        log_err("Server closed connection.\n");
         exit(1);
     }
 
