@@ -63,10 +63,10 @@ void dsl_sub(ClientContext *client_context, char *val_var1, char *val_var2, char
 
 void dsl_print(ClientContext *client_context, Vector *val_vars, Message *send_message);
 
-void dsl_batch_queries(Message *send_message);
-void dsl_batch_execute(Message *send_message);
+void dsl_batch_queries(ClientContext *client_context, Message *send_message);
+void dsl_batch_execute(ClientContext *client_context, Message *send_message);
 
-void dsl_shutdown(Message *send_message);
+void dsl_shutdown();
 
 bool is_shutdown_initiated();
 

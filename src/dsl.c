@@ -5,6 +5,7 @@
 #include "client_context.h"
 #include "db_manager.h"
 #include "dsl.h"
+#include "scheduler.h"
 #include "utils.h"
 
 bool shutdown_initiated = false;
@@ -35,6 +36,9 @@ void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
         Column *column = column_lookup(col_fqns->data[i]);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
+            if (table != NULL) {
+                pthread_rwlock_unlock(&table->rwlock);
+            }
             return;
         } else {
             columns[i] = column;
@@ -42,11 +46,15 @@ void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
             if (i == 0) {
                 table = column->table;
 
+                pthread_rwlock_wrlock(&table->rwlock);
+
                 if (num_columns != table->columns_capacity) {
                     send_message->status = INSERT_COLUMNS_MISMATCH;
+                    pthread_rwlock_unlock(&table->rwlock);
                     return;
                 } else if (table->columns_count != table->columns_capacity) {
                     send_message->status = TABLE_NOT_FULLY_INITIALIZED;
+                    pthread_rwlock_unlock(&table->rwlock);
                     return;
                 }
             }
@@ -67,6 +75,8 @@ void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
     }
 
     index_rebuild_all(table);
+
+    pthread_rwlock_unlock(&table->rwlock);
 }
 
 static inline unsigned int dsl_select_lower(int *values, unsigned int values_count, int high,
@@ -113,6 +123,7 @@ static inline unsigned int dsl_select_range(int *values, unsigned int values_cou
 void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, int low,
         bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
     Column *source;
+    pthread_rwlock_t *table_rwlock;
     int *values;
     unsigned int values_count;
     ColumnIndex *index;
@@ -123,6 +134,7 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
             return;
         }
         source = column;
+        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -136,7 +148,8 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
-        source = variable->source;
+        source = NULL;
+        table_rwlock = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
         index = NULL;
@@ -186,6 +199,10 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
         } else if (result_count < values_count) {
             result = realloc(result, result_count * sizeof(unsigned int));
         }
+    }
+
+    if (table_rwlock != NULL) {
+        pthread_rwlock_unlock(table_rwlock);
     }
 
     pos_result_put(client_context, pos_out_var, source, result, result_count);
@@ -293,12 +310,6 @@ void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var,
 
 void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, char *val_out_var,
         Message *send_message) {
-    Column *column = column_lookup(column_fqn);
-    if (column == NULL) {
-        send_message->status = COLUMN_NOT_FOUND;
-        return;
-    }
-
     Result *pos = result_lookup(client_context, pos_var);
     if (pos == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
@@ -309,16 +320,29 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
         return;
     }
 
+    Column *column = column_lookup(column_fqn);
+    if (column == NULL) {
+        send_message->status = COLUMN_NOT_FOUND;
+        return;
+    }
+
+    pthread_rwlock_rdlock(&column->table->rwlock);
+
     unsigned int *positions = pos->values.pos_values;
     unsigned int positions_count = pos->num_tuples;
 
     int *result = NULL;
     if (positions_count > 0) {
-        ColumnIndex *source_index = pos->source->index;
-
         int *values;
-        if (source_index != NULL && source_index->clustered) {
-            values = source_index->clustered_columns[column->order].data;
+        Column *source = pos->source;
+        if (source != NULL) {
+            ColumnIndex *source_index = source->index;
+
+            if (source_index != NULL && source_index->clustered) {
+                values = source_index->clustered_columns[column->order].data;
+            } else {
+                values = column->values.data;
+            }
         } else {
             values = column->values.data;
         }
@@ -328,6 +352,8 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
             result[i] = values[positions[i]];
         }
     }
+
+    pthread_rwlock_unlock(&column->table->rwlock);
 
     int_result_put(client_context, val_out_var, result, positions_count);
 }
@@ -377,18 +403,25 @@ void dsl_relational_insert(char *table_fqn, IntVector *values, Message *send_mes
         send_message->status = TABLE_NOT_FOUND;
         return;
     }
+
+    pthread_rwlock_wrlock(&table->rwlock);
+
     if (values->size != table->columns_capacity) {
         send_message->status = INSERT_COLUMNS_MISMATCH;
+        pthread_rwlock_unlock(&table->rwlock);
         return;
     }
     if (table->columns_count != table->columns_capacity) {
         send_message->status = TABLE_NOT_FULLY_INITIALIZED;
+        pthread_rwlock_unlock(&table->rwlock);
         return;
     }
 
     for (unsigned int i = 0; i < table->columns_capacity; i++) {
         dsl_insert(&table->columns[i], values);
     }
+
+    pthread_rwlock_unlock(&table->rwlock);
 }
 
 void dsl_relational_delete(ClientContext *client_context, char *table_fqn, char *pos_var,
@@ -402,6 +435,7 @@ void dsl_join(ClientContext *client_context, char *val_var1, char *pos_var1, cha
 
 void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
+    pthread_rwlock_t *table_rwlock;
     int *values;
     unsigned int values_count;
     ColumnIndex *index;
@@ -411,6 +445,7 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
+        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -424,6 +459,7 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+        table_rwlock = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
         index = NULL;
@@ -431,6 +467,9 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 
     if (values_count == 0) {
         send_message->status = EMPTY_VECTOR;
+        if (table_rwlock != NULL) {
+            pthread_rwlock_unlock(table_rwlock);
+        }
         return;
     }
 
@@ -451,6 +490,10 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             min_value = sorted_min(&index->fields.sorted, NULL);
             break;
         }
+    }
+
+    if (table_rwlock != NULL) {
+        pthread_rwlock_unlock(table_rwlock);
     }
 
     int *value_out = malloc(sizeof(int));
@@ -483,6 +526,7 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         positions_count = 0;
     }
 
+    pthread_rwlock_t *table_rwlock;
     int *values;
     unsigned int values_count;
     ColumnIndex *index;
@@ -493,6 +537,7 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             return;
         }
         source = column;
+        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -506,6 +551,7 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+        table_rwlock = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
         index = NULL;
@@ -513,6 +559,9 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 
     if (values_count == 0) {
         send_message->status = EMPTY_VECTOR;
+        if (table_rwlock != NULL) {
+            pthread_rwlock_unlock(table_rwlock);
+        }
         return;
     }
 
@@ -521,6 +570,9 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
     if (index == NULL) {
         if (positions != NULL && positions_count != values_count) {
             send_message->status = TUPLE_COUNT_MISMATCH;
+            if (table_rwlock != NULL) {
+                pthread_rwlock_unlock(table_rwlock);
+            }
             return;
         }
 
@@ -550,6 +602,10 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         }
     }
 
+    if (table_rwlock != NULL) {
+        pthread_rwlock_unlock(table_rwlock);
+    }
+
     unsigned int *position_out = malloc(sizeof(unsigned int));
     *position_out = min_position;
 
@@ -563,6 +619,7 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 
 void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
+    pthread_rwlock_t *table_rwlock;
     int *values;
     unsigned int values_count;
     ColumnIndex *index;
@@ -572,6 +629,7 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
+        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -585,6 +643,7 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+        table_rwlock = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
         index = NULL;
@@ -592,6 +651,9 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 
     if (values_count == 0) {
         send_message->status = EMPTY_VECTOR;
+        if (table_rwlock != NULL) {
+            pthread_rwlock_unlock(table_rwlock);
+        }
         return;
     }
 
@@ -612,6 +674,10 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             max_value = sorted_max(&index->fields.sorted, NULL);
             break;
         }
+    }
+
+    if (table_rwlock != NULL) {
+        pthread_rwlock_unlock(table_rwlock);
     }
 
     int *value_out = malloc(sizeof(int));
@@ -644,6 +710,7 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         positions_count = 0;
     }
 
+    pthread_rwlock_t *table_rwlock;
     int *values;
     unsigned int values_count;
     ColumnIndex *index;
@@ -654,6 +721,7 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             return;
         }
         source = column;
+        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -667,6 +735,7 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+        table_rwlock = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
         index = NULL;
@@ -674,6 +743,9 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 
     if (values_count == 0) {
         send_message->status = EMPTY_VECTOR;
+        if (table_rwlock != NULL) {
+            pthread_rwlock_unlock(table_rwlock);
+        }
         return;
     }
 
@@ -682,6 +754,9 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
     if (index == NULL) {
         if (positions != NULL && positions_count != values_count) {
             send_message->status = TUPLE_COUNT_MISMATCH;
+            if (table_rwlock != NULL) {
+                pthread_rwlock_unlock(table_rwlock);
+            }
             return;
         }
 
@@ -711,6 +786,10 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         }
     }
 
+    if (table_rwlock != NULL) {
+        pthread_rwlock_unlock(table_rwlock);
+    }
+
     unsigned int *position_out = malloc(sizeof(unsigned int));
     *position_out = max_position;
 
@@ -724,6 +803,7 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 
 void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
+    pthread_rwlock_t *table_rwlock;
     int *values;
     unsigned int values_count;
     if (col_hdl->is_column_fqn) {
@@ -732,6 +812,7 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
+        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
         values = column->values.data;
         values_count = column->values.size;
     } else {
@@ -744,6 +825,7 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+        table_rwlock = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
     }
@@ -751,6 +833,10 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
     long long int result = 0;
     for (unsigned int i = 0; i < values_count; i++) {
         result += values[i];
+    }
+
+    if (table_rwlock != NULL) {
+        pthread_rwlock_unlock(table_rwlock);
     }
 
     long long int *value_out = malloc(sizeof(long long int));
@@ -761,6 +847,7 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 
 void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
+    pthread_rwlock_t *table_rwlock;
     int *values;
     unsigned int values_count;
     if (col_hdl->is_column_fqn) {
@@ -769,6 +856,7 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
+        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
         values = column->values.data;
         values_count = column->values.size;
     } else {
@@ -781,12 +869,16 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+        table_rwlock = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
     }
 
     if (values_count == 0) {
         send_message->status = EMPTY_VECTOR;
+        if (table_rwlock != NULL) {
+            pthread_rwlock_unlock(table_rwlock);
+        }
         return;
     }
 
@@ -795,6 +887,10 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         sum += values[i];
     }
     double result = (double) sum / (double) values_count;
+
+    if (table_rwlock != NULL) {
+        pthread_rwlock_unlock(table_rwlock);
+    }
 
     double *value_out = malloc(sizeof(double));
     *value_out = result;
@@ -979,16 +1075,27 @@ void dsl_print(ClientContext *client_context, Vector *val_vars, Message *send_me
     }
 }
 
-void dsl_batch_queries(Message *send_message) {
-    (void) send_message;
+void dsl_batch_queries(ClientContext *client_context, Message *send_message) {
+    if (client_context->is_batching) {
+        send_message->status = ALREADY_BATCHING;
+        return;
+    }
+
+    client_context->is_batching = true;
 }
 
-void dsl_batch_execute(Message *send_message) {
-    (void) send_message;
+void dsl_batch_execute(ClientContext *client_context, Message *send_message) {
+    if (!client_context->is_batching) {
+        send_message->status = NOT_BATCHING;
+        return;
+    }
+
+    client_context->is_batching = false;
+
+    scheduler_execute_concurrently(client_context, send_message);
 }
 
-void dsl_shutdown(Message *send_message) {
-    (void) send_message;
+void dsl_shutdown() {
     shutdown_initiated = true;
 }
 

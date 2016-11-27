@@ -6,7 +6,7 @@
 #include "utils.h"
 #include "vector.h"
 
-void log_db_operator(DbOperator *query) {
+void db_operator_log(DbOperator *query) {
 #ifdef LOG_INFO
     switch (query->type) {
     case CREATE_DB:
@@ -113,7 +113,7 @@ void log_db_operator(DbOperator *query) {
 #endif
 }
 
-void execute_db_operator(DbOperator *query, Message *message) {
+void db_operator_execute(DbOperator *query, Message *message) {
     switch (query->type) {
     case CREATE_DB:
         dsl_create_db(query->fields.create_db.name, message);
@@ -190,13 +190,13 @@ void execute_db_operator(DbOperator *query, Message *message) {
         dsl_print(query->context, &query->fields.print.val_vars, message);
         break;
     case BATCH_QUERIES:
-        dsl_batch_queries(message);
+        dsl_batch_queries(query->context, message);
         break;
     case BATCH_EXECUTE:
-        dsl_batch_execute(message);
+        dsl_batch_execute(query->context, message);
         break;
     case SHUTDOWN:
-        dsl_shutdown(message);
+        dsl_shutdown();
         break;
     }
 }

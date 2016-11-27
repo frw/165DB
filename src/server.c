@@ -14,8 +14,6 @@
  * http://beej.us/guide/bgipc/output/html/multipage/unixsock.html
  */
 
-#define _GNU_SOURCE
-
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -35,14 +33,84 @@
 #include "db_operator.h"
 #include "message.h"
 #include "parser.h"
+#include "scheduler.h"
 #include "utils.h"
+#include "vector.h"
 
-#define NAME_SET_INITIAL_CAPACITY 128
+#define CLIENTS_VECTOR_INITIAL_CAPACITY 128
+
+#define NAME_SET_INITIAL_CAPACITY 64
 #define NAME_SET_LOAD_FACTOR 0.75f
 
 #define DEFAULT_NUM_COLUMNS 4
 #define MINIMUM_NUM_TUPLES 1024
 #define APPROXIMATE_CHARS_PER_VALUE 10
+
+typedef struct ClientNode {
+    int client_socket;
+    struct ClientNode *next;
+    struct ClientNode *prev;
+} ClientNode;
+
+int server_socket;
+
+ClientNode *clients_head;
+ClientNode *clients_tail;
+pthread_mutex_t clients_mutex;
+pthread_cond_t clients_cond;
+
+/**
+ * setup_server()
+ *
+ * This sets up the connection on the server side using unix sockets.
+ * Returns a valid server socket fd on success, else -1 on failure.
+ */
+static inline bool setup_server() {
+    size_t len;
+    struct sockaddr_un local;
+
+    log_info("Attempting to setup server...\n");
+
+    if ((server_socket = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
+        log_err("L%d: Failed to create socket.\n", __LINE__);
+        return false;
+    }
+
+    local.sun_family = AF_UNIX;
+    strcpy(local.sun_path, SOCK_PATH);
+    unlink(local.sun_path);
+
+    len = strlen(local.sun_path) + sizeof(local.sun_family) + 1;
+    if (bind(server_socket, (struct sockaddr *) &local, len) == -1) {
+        log_err("L%d: Socket failed to bind.\n", __LINE__);
+        return false;
+    }
+
+    if (listen(server_socket, SOMAXCONN) == -1) {
+        log_err("L%d: Failed to listen on socket.\n", __LINE__);
+        return false;
+    }
+
+    clients_head = NULL;
+    clients_tail = NULL;
+    pthread_mutex_init(&clients_mutex, NULL);
+    pthread_cond_init(&clients_cond, NULL);
+
+    db_manager_startup();
+
+    return true;
+}
+
+void tear_down_server() {
+    db_manager_shutdown();
+
+    pthread_mutex_destroy(&clients_mutex);
+    pthread_cond_destroy(&clients_cond);
+
+    close(server_socket);
+
+    unlink(SOCK_PATH);
+}
 
 bool load_file(DbOperator *dbo, MessageStatus *status) {
     int client_socket = dbo->context->client_socket;
@@ -224,21 +292,23 @@ read_loop:
     return !error;
 }
 
-static inline void handle_db_operator(DbOperator *dbo, Message *message) {
-    switch (dbo->type) {
-    case LOAD:
-        if (!load_file(dbo, &message->status)) {
-            db_operator_free(dbo);
-            return;
-        }
-        break;
-    default:
-        break;
+static inline void handle_operator(DbOperator *dbo, Message *message) {
+    db_operator_log(dbo);
+
+    if (dbo->type == LOAD && !load_file(dbo, &message->status)) {
+        db_operator_free(dbo);
+        return;
     }
 
-    log_db_operator(dbo);
-    execute_db_operator(dbo, message);
-    db_operator_free(dbo);
+    if (dbo->context->is_batching
+            && dbo->type != BATCH_QUERIES
+            && dbo->type != BATCH_EXECUTE
+            && dbo->type != SHUTDOWN) {
+        scheduler_handle_operator(dbo, message);
+    } else {
+        db_operator_execute(dbo, message);
+        db_operator_free(dbo);
+    }
 }
 
 /**
@@ -246,14 +316,14 @@ static inline void handle_db_operator(DbOperator *dbo, Message *message) {
  * This is the execution routine after a client has connected.
  * It will continually listen for messages from the client and execute queries.
  **/
-void handle_client(int client_socket) {
+static inline void handle_client(int client_socket) {
     log_info("Connected to socket: %d.\n", client_socket);
 
     int length = 0;
 
     // Create two messages, one from which to read and one from which to receive.
-    Message send_message = { 0 };
-    Message recv_message = { 0 };
+    Message send_message = MESSAGE_INITIALIZER;
+    Message recv_message = MESSAGE_INITIALIZER;
 
     // Create ClientContext.
     ClientContext client_context;
@@ -292,82 +362,76 @@ void handle_client(int client_socket) {
 
         // 2. Handle request
         if (query != NULL) {
-            handle_db_operator(query, &send_message);
+            handle_operator(query, &send_message);
         }
+
+        MessageStatus status = send_message.status;
 
         if (is_shutdown_initiated()) {
             send_message.status |= SHUTDOWN_FLAG;
+            // Shutdown server socket to stop accepting new connections
+            shutdown(server_socket, SHUT_RD);
         }
 
         // 3. Send status of the received message (OK, UNKNOWN_QUERY, etc)
         if (send(client_socket, &send_message.status, sizeof(send_message.status), 0) == -1) {
             log_err("Failed to send message.");
+            free(send_message.payload);
             break;
         }
 
         // 4. Send response of request
-        if ((send_message.status & ~SHUTDOWN_FLAG) == OK_WAIT_FOR_RESPONSE) {
+        if (status == OK_WAIT_FOR_RESPONSE) {
             if (send(client_socket, &send_message.length, sizeof(send_message.length), 0) == -1) {
                 log_err("Failed to send message.");
+                free(send_message.payload);
                 break;
             }
 
             if (send_message.length > 0
                     && send(client_socket, send_message.payload, send_message.length, 0) == -1) {
                 log_err("Failed to send message.");
+                free(send_message.payload);
                 break;
             }
+
             free(send_message.payload);
         }
     } while(!is_shutdown_initiated());
 
     client_context_destroy(&client_context);
+
     close(client_socket);
     log_info("Connection closed at socket %d!\n", client_socket);
 }
 
-/**
- * setup_server()
- *
- * This sets up the connection on the server side using unix sockets.
- * Returns a valid server socket fd on success, else -1 on failure.
- */
-static inline int setup_server() {
-    int server_socket;
-    size_t len;
-    struct sockaddr_un local;
+void *client_thread_routine(void *data) {
+    ClientNode *node = data;
 
-    log_info("Attempting to setup server...\n");
+    handle_client(node->client_socket);
 
-    if ((server_socket = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
-        log_err("L%d: Failed to create socket.\n", __LINE__);
-        return -1;
+    pthread_mutex_lock(&clients_mutex);
+
+    if (node->next != NULL) {
+        node->next->prev = node->prev;
+    } else {
+        clients_tail = node->prev;
+    }
+    if (node->prev != NULL) {
+        node->prev->next = node->next;
+    } else {
+        clients_head = node->next;
     }
 
-    local.sun_family = AF_UNIX;
-    strcpy(local.sun_path, SOCK_PATH);
-    unlink(local.sun_path);
-
-    len = strlen(local.sun_path) + sizeof(local.sun_family) + 1;
-    if (bind(server_socket, (struct sockaddr *) &local, len) == -1) {
-        log_err("L%d: Socket failed to bind.\n", __LINE__);
-        return -1;
+    if (clients_head == NULL) {
+        pthread_cond_broadcast(&clients_cond);
     }
 
-    if (listen(server_socket, 5) == -1) {
-        log_err("L%d: Failed to listen on socket.\n", __LINE__);
-        return -1;
-    }
+    pthread_mutex_unlock(&clients_mutex);
 
-    db_manager_startup();
+    free(node);
 
-    return server_socket;
-}
-
-void tear_down_server() {
-    db_manager_shutdown();
-
-    unlink(SOCK_PATH);
+    return NULL;
 }
 
 // Currently this main will setup the socket and accept a single client.
@@ -375,8 +439,7 @@ void tear_down_server() {
 // You will need to extend this to handle multiple concurrent clients
 // and remain running until it receives a shut-down command.
 int main(void) {
-    int server_socket = setup_server();
-    if (server_socket < 0) {
+    if (!setup_server()) {
         exit(1);
     }
 
@@ -390,13 +453,53 @@ int main(void) {
 
     do {
         if ((client_socket = accept(server_socket, (struct sockaddr *) &remote, &t)) == -1) {
-            log_err("L%d: Failed to accept a new connection.\n", __LINE__);
-            exit(1);
+            // An errno of EINVAL means that the socket has been shutdown.
+            if (errno != EINVAL) {
+                log_err("L%d: Failed to accept a new connection.\n", __LINE__);
+            }
+            break;
         }
 
-        handle_client(client_socket);
+        pthread_t client_thread;
+
+        ClientNode *node = malloc(sizeof(ClientNode));
+        node->client_socket = client_socket;
+
+        pthread_mutex_lock(&clients_mutex);
+
+        if (pthread_create(&client_thread, NULL, &client_thread_routine, node) == 0) {
+            node->next = NULL;
+            node->prev = clients_tail;
+            if (clients_head == NULL) {
+                clients_head = node;
+            } else {
+                clients_tail->next = node;
+            }
+            clients_tail = node;
+
+            pthread_detach(client_thread);
+        } else {
+            log_err("Unable to create client worker thread.\n");
+            free(node);
+        }
+
+        pthread_mutex_unlock(&clients_mutex);
+
     } while(!is_shutdown_initiated());
+
+    pthread_mutex_lock(&clients_mutex);
+
+    // Shutdown all client sockets
+    for (ClientNode *node = clients_head; node != NULL; node = node->next) {
+        shutdown(node->client_socket, SHUT_RD);
+    }
+
+    // Wait until all threads have terminated
+    while (clients_head != NULL) {
+        pthread_cond_wait(&clients_cond, &clients_mutex);
+    }
+
+    pthread_mutex_unlock(&clients_mutex);
 
     return 0;
 }
-

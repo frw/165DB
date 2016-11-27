@@ -1,6 +1,5 @@
-#define _BSD_SOURCE
-
 #include <dirent.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +27,7 @@
 Db *db_manager_dbs = NULL;
 
 HashTable db_manager_table;
+pthread_mutex_t db_manager_table_mutex;
 
 static inline void db_free(Db *db);
 static inline void table_free(Table *table);
@@ -51,6 +51,7 @@ static inline void column_register(Column *column, char *table_fqn);
 void db_manager_startup() {
     hash_table_init(&db_manager_table, DB_MANAGER_TABLE_INITIAL_CAPACITY,
             DB_MANAGER_TABLE_LOAD_FACTOR);
+    pthread_mutex_init(&db_manager_table_mutex, NULL);
 
     DIR *dir;
     struct dirent *ent;
@@ -81,6 +82,7 @@ void db_manager_shutdown() {
     }
 
     hash_table_destroy(&db_manager_table, NULL);
+    pthread_mutex_destroy(&db_manager_table_mutex);
 }
 
 void db_create(char *name, Message *send_message) {
@@ -97,7 +99,9 @@ void db_create(char *name, Message *send_message) {
 
     db_manager_dbs = db;
 
+    pthread_mutex_lock(&db_manager_table_mutex);
     hash_table_put(&db_manager_table, name, db);
+    pthread_mutex_unlock(&db_manager_table_mutex);
 }
 
 void table_create(char *name, char *db_name, unsigned int num_columns, Message *send_message) {
@@ -120,13 +124,16 @@ void table_create(char *name, char *db_name, unsigned int num_columns, Message *
     table->columns = malloc(num_columns * sizeof(Column));
     table->columns_count = 0;
     table->columns_capacity = num_columns;
+    pthread_rwlock_init(&table->rwlock, NULL);
     table->db = db;
     table->next = db->tables;
 
     db->tables = table;
     db->tables_count++;
 
+    pthread_mutex_lock(&db_manager_table_mutex);
     hash_table_put(&db_manager_table, table_fqn, table);
+    pthread_mutex_unlock(&db_manager_table_mutex);
 
     free(table_fqn);
 }
@@ -162,7 +169,9 @@ void column_create(char *name, char *table_fqn, Message *send_message) {
 
     table->columns_count++;
 
+    pthread_mutex_lock(&db_manager_table_mutex);
     hash_table_put(&db_manager_table, column_fqn, column);
+    pthread_mutex_unlock(&db_manager_table_mutex);
 
     free(column_fqn);
 }
@@ -307,6 +316,27 @@ void index_rebuild_all(Table *table) {
     }
 }
 
+Db *db_lookup(char *db_name) {
+    pthread_mutex_lock(&db_manager_table_mutex);
+    Db *db = hash_table_get(&db_manager_table, db_name);
+    pthread_mutex_unlock(&db_manager_table_mutex);
+    return db;
+}
+
+Table *table_lookup(char *table_fqn) {
+    pthread_mutex_lock(&db_manager_table_mutex);
+    Table *table = hash_table_get(&db_manager_table, table_fqn);
+    pthread_mutex_unlock(&db_manager_table_mutex);
+    return table;
+}
+
+Column *column_lookup(char *column_fqn) {
+    pthread_mutex_lock(&db_manager_table_mutex);
+    Column *column = hash_table_get(&db_manager_table, column_fqn);
+    pthread_mutex_unlock(&db_manager_table_mutex);
+    return column;
+}
+
 static inline void db_free(Db *db) {
     free(db->name);
     for (Table *table = db->tables, *next; table != NULL; table = next) {
@@ -322,6 +352,7 @@ static inline void table_free(Table *table) {
         column_free(&table->columns[i]);
     }
     free(table->columns);
+    pthread_rwlock_destroy(&table->rwlock);
     free(table);
 }
 
@@ -603,6 +634,7 @@ static inline Table *table_load(FILE *file) {
     table->columns = malloc(columns_capacity * sizeof(Column));
     table->columns_count = 0;
     table->columns_capacity = columns_capacity;
+    pthread_rwlock_init(&table->rwlock, NULL);
 
     for (unsigned int i = 0; i < columns_count; i++) {
         Column *column = &table->columns[i];

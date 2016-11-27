@@ -205,8 +205,8 @@ typedef struct DbOperator {
     ClientContext *context;
 } DbOperator;
 
-void log_db_operator(DbOperator *query);
-void execute_db_operator(DbOperator *query, Message *message);
+void db_operator_log(DbOperator *query);
+void db_operator_execute(DbOperator *query, Message *message);
 void db_operator_free(DbOperator *query);
 
 #endif /* DB_OPERATOR_H */

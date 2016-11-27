@@ -19,6 +19,7 @@ typedef struct HashTable {
 void hash_table_init(HashTable *h, unsigned int initial_capacity, float load_factor);
 void *hash_table_put(HashTable *h, char *key, void *value);
 void *hash_table_get(HashTable *h, char *key);
+void hash_table_clear(HashTable *h, void (*value_free)(void *));
 void hash_table_destroy(HashTable *h, void (*value_free)(void *));
 
 #endif /* HASH_TABLE_H */

@@ -11,8 +11,6 @@
  * http://beej.us/guide/bgipc/output/html/multipage/unixsock.html
  */
 
-#define _GNU_SOURCE
-
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -162,8 +160,8 @@ int main(void) {
         exit(1);
     }
 
-    Message send_message = { 0 };
-    Message recv_message = { 0 };
+    Message send_message = MESSAGE_INITIALIZER;
+    Message recv_message = MESSAGE_INITIALIZER;
 
     bool interactive = isatty(fileno(stdin));
 

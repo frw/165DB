@@ -1,6 +1,7 @@
 #ifndef DB_MANAGER_H
 #define DB_MANAGER_H
 
+#include <pthread.h>
 #include <stdbool.h>
 
 #include "btree.h"
@@ -48,6 +49,7 @@ struct Table {
     Column *columns;
     unsigned int columns_count;
     unsigned int columns_capacity;
+    pthread_rwlock_t rwlock;
     Db *db;
     Table *next;
 };
@@ -79,8 +81,6 @@ struct ColumnIndex {
     Column *column;
 };
 
-extern HashTable db_manager_table;
-
 void db_manager_startup();
 void db_manager_shutdown();
 
@@ -90,14 +90,8 @@ void column_create(char *name, char *table_fqn, Message *send_message);
 void index_create(char *column_fqn, ColumnIndexType type, bool clustered, Message *send_message);
 void index_rebuild_all(Table *table);
 
-static inline Db *db_lookup(char *db_name) {
-    return hash_table_get(&db_manager_table, db_name);
-}
-static inline Table *table_lookup(char *table_fqn) {
-    return hash_table_get(&db_manager_table, table_fqn);
-}
-static inline Column *column_lookup(char *column_fqn) {
-    return hash_table_get(&db_manager_table, column_fqn);
-}
+Db *db_lookup(char *db_name);
+Table *table_lookup(char *table_fqn);
+Column *column_lookup(char *column_fqn);
 
 #endif /* DB_MANAGER_H */

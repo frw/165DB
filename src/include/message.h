@@ -3,6 +3,8 @@
 
 #define SHUTDOWN_FLAG (1 << (sizeof(MessageStatus) * 8 - 1))
 
+#define MESSAGE_INITIALIZER ((Message) { OK, 0, NULL})
+
 // MesageStatus defines the status of the previous request.
 #define MESSAGE_STATUSES \
     ENUM(OK) \
@@ -30,6 +32,10 @@
     ENUM(INSERT_COLUMNS_MISMATCH) \
     ENUM(FILE_READ_ERROR) \
     ENUM(INCORRECT_FILE_FORMAT) \
+    ENUM(ALREADY_BATCHING) \
+    ENUM(NOT_BATCHING) \
+    ENUM(BATCH_QUERY_UNSUPPORTED) \
+    ENUM(BATCH_EXECUTION_ERROR) \
     ENUM(COMMUNICATION_ERROR) \
 
 typedef enum MessageStatus {

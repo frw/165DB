@@ -1,6 +1,3 @@
-
-#define _BSD_SOURCE
-
 #include <ctype.h>
 #include <stdbool.h>
 #include <stddef.h>

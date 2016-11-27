@@ -1,5 +1,3 @@
-#define _BSD_SOURCE
-
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,7 +78,7 @@ void *hash_table_get(HashTable *h, char *key) {
     return NULL;
 }
 
-void hash_table_destroy(HashTable *h, void (*value_free)(void *)) {
+static inline void hash_table_node_free_all(HashTable *h, void (*value_free)(void *)) {
     for (HashTableNode *node = h->nodes, *next; node != NULL; node = next) {
         free(node->key);
         if (value_free != NULL) {
@@ -89,5 +87,16 @@ void hash_table_destroy(HashTable *h, void (*value_free)(void *)) {
         next = node->nodes_next;
         free(node);
     }
+}
+
+void hash_table_clear(HashTable *h, void (*value_free)(void *)) {
+    memset(h->buckets, 0, h->num_buckets * sizeof(HashTableNode *));
+    hash_table_node_free_all(h, value_free);
+    h->nodes = NULL;
+    h->num_nodes = 0;
+}
+
+void hash_table_destroy(HashTable *h, void (*value_free)(void *)) {
+    hash_table_node_free_all(h, value_free);
     free(h->buckets);
 }

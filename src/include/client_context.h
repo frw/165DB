@@ -1,9 +1,13 @@
 #ifndef CLIENT_CONTEXT_H
 #define CLIENT_CONTEXT_H
 
+#include <pthread.h>
+#include <stdbool.h>
+
 #include "common.h"
 #include "db_manager.h"
 #include "hash_table.h"
+#include "vector.h"
 
 typedef union ResultValues {
     unsigned int *pos_values;
@@ -27,8 +31,11 @@ typedef struct Result {
  * Holds the information necessary to refer to generalized columns (results or columns).
  */
 typedef struct ClientContext {
-    HashTable results_table;
     int client_socket;
+    HashTable results_table;
+    pthread_mutex_t results_mutex;
+    bool is_batching;
+    Vector batched_operators;
 } ClientContext;
 
 void client_context_init(ClientContext *client_context, int client_socket);
@@ -57,9 +64,7 @@ static inline void float_result_put(ClientContext *client_context, char *name,
     result_put(client_context, name, FLOAT, NULL, float_values, num_tuples);
 }
 
-static inline Result *result_lookup(ClientContext *client_context, char *name) {
-    return hash_table_get(&client_context->results_table, name);
-}
+Result *result_lookup(ClientContext *client_context, char *name);
 
 void result_free(Result *result);
 
