@@ -176,7 +176,7 @@ void column_create(char *name, char *table_fqn, Message *send_message) {
     free(column_fqn);
 }
 
-static ColumnIndex *index_create_internal(Column *column, ColumnIndexType type, bool clustered) {
+static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clustered) {
     ColumnIndex *index = malloc(sizeof(ColumnIndex));
     index->type = type;
     index->clustered = clustered;
@@ -296,22 +296,52 @@ void index_create(char *column_fqn, ColumnIndexType type, bool clustered, Messag
         return;
     }
 
-    column->index = index_create_internal(column, type, clustered);
+    column->index = index_build(column, type, clustered);
+}
+
+static void index_rebuild(Column *column) {
+    ColumnIndex *index = column->index;
+
+    ColumnIndexType type = index->type;
+    bool clustered = index->clustered;
+
+    index_free(index);
+
+    column->index = index_build(column, type, clustered);
+}
+
+static void *index_rebuild_routine(void *data) {
+    Column *column = data;
+    index_rebuild(column);
+    return NULL;
 }
 
 void index_rebuild_all(Table *table) {
+    Column *columns[table->columns_count];
+    unsigned int index_count = 0;
     for (unsigned int i = 0; i < table->columns_count; i++) {
         Column *column = table->columns + i;
-
         if (column->index != NULL) {
-            ColumnIndex *index = column->index;
+            columns[index_count++] = column;
+        }
+    }
 
-            ColumnIndexType type = index->type;
-            bool clustered = index->clustered;
+    if (index_count > 0) {
+        if (index_count == 1) {
+            index_rebuild(columns[0]);
+        } else {
+            pthread_t threads[index_count];
 
-            index_free(index);
+            for (unsigned int i = 0; i < index_count; i++) {
+                if (pthread_create(threads + i, NULL, &index_rebuild_routine, columns[i]) != 0) {
+                    log_err("Unable to index rebuild worker thread.");
+                    exit(1);
+                }
+            }
 
-            column->index = index_create_internal(column, type, clustered);
+            for (unsigned int i = 0; i < index_count; i++) {
+                pthread_join(threads[i], NULL);
+            }
         }
     }
 }

@@ -275,7 +275,6 @@ static inline void register_output(DbOperator *dbo, HashTable *output_table) {
 typedef struct Query {
     DbOperator *dbo;
     Message message;
-    pthread_t query_thread;
 } Query;
 
 void *query_routine(void *data) {
@@ -301,6 +300,7 @@ static inline bool execute_operators(HashTable *output_table) {
     }
 
     Query queries[output_table->num_nodes];
+    pthread_t threads[output_table->num_nodes];
 
     unsigned int i = 0;
     for (HashTableNode *node = output_table->nodes; node != NULL; node = node->nodes_next) {
@@ -310,7 +310,7 @@ static inline bool execute_operators(HashTable *output_table) {
         query->dbo = dbo;
         query->message = MESSAGE_INITIALIZER;
 
-        if (pthread_create(&query->query_thread, NULL, &query_routine, query) != 0) {
+        if (pthread_create(threads + i, NULL, &query_routine, query) != 0) {
             log_err("Unable to create query worker thread.");
             exit(1);
         }
@@ -320,12 +320,10 @@ static inline bool execute_operators(HashTable *output_table) {
 
     bool success = true;
 
-    for (i = 0; i < output_table->num_nodes; i++) {
-        Query *query = queries + i;
+    for (unsigned int j = 0; j < i; j++) {
+        pthread_join(threads[j], NULL);
 
-        pthread_join(query->query_thread, NULL);
-
-        if (query->message.status != OK) {
+        if (queries[j].message.status != OK) {
             success = false;
         }
     }
