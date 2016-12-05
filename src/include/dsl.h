@@ -9,7 +9,7 @@
 #include "vector.h"
 
 typedef enum JoinType {
-    HASH, NESTED_LOOP
+    HASH, NESTED_LOOP, SORT_MERGE
 } JoinType;
 
 typedef struct GeneralizedColumnHandle {
@@ -20,14 +20,15 @@ typedef struct GeneralizedColumnHandle {
 void dsl_create_db(char *name, Message *send_message);
 void dsl_create_table(char *name, char *db_name, unsigned int num_columns, Message *send_message);
 void dsl_create_column(char *name, char *table_fqn, Message *send_message);
-void dsl_create_index(char *column_fqn, ColumnIndexType type, bool clustered, Message *send_message);
+void dsl_create_index(char *column_fqn, ColumnIndexType type, bool clustered,
+        Message *send_message);
 
 void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message);
 
 void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, int low,
-        bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message);
+bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message);
 void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var, int low,
-        bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message);
+bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message);
 
 void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, char *val_out_var,
         Message *send_message);
@@ -38,8 +39,8 @@ void dsl_relational_delete(ClientContext *client_context, char *table_fqn, char 
 void dsl_relational_update(ClientContext *client_context, char *column_fqn, char *pos_var,
         int value, Message *send_message);
 
-void dsl_join(ClientContext *client_context, char *val_var1, char *pos_var1, char *val_var2,
-        char *pos_var2, char *pos_out_var1, char *pos_out_var2, JoinType type,
+void dsl_join(ClientContext *client_context, JoinType type, char *val_var1, char *pos_var1,
+        char *val_var2, char *pos_var2, char *pos_out_var1, char *pos_out_var2,
         Message *send_message);
 
 void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,

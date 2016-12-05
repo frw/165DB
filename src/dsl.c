@@ -5,6 +5,7 @@
 #include "client_context.h"
 #include "db_manager.h"
 #include "dsl.h"
+#include "join.h"
 #include "scheduler.h"
 #include "utils.h"
 
@@ -109,8 +110,8 @@ static inline unsigned int dsl_select_equal(int *values, unsigned int values_cou
     return result_count;
 }
 
-static inline unsigned int dsl_select_range(int *values, unsigned int values_count, int low, int high,
-        unsigned int *result) {
+static inline unsigned int dsl_select_range(int *values, unsigned int values_count, int low,
+        int high, unsigned int *result) {
     unsigned int result_count = 0;
     for (unsigned int i = 0; i < values_count; i++) {
         result[result_count] = i;
@@ -121,7 +122,7 @@ static inline unsigned int dsl_select_range(int *values, unsigned int values_cou
 }
 
 void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, int low,
-        bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
+bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
     Column *source;
     pthread_rwlock_t *table_rwlock;
     int *values;
@@ -250,7 +251,7 @@ static inline unsigned int dsl_select_pos_range(unsigned int *positions, int *va
 }
 
 void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var, int low,
-        bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
+bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
     Result *pos = result_lookup(client_context, pos_var);
     if (pos == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
@@ -429,9 +430,124 @@ void dsl_relational_delete(ClientContext *client_context, char *table_fqn, char 
 void dsl_relational_update(ClientContext *client_context, char *column_fqn, char *pos_var,
         int value, Message *send_message);
 
-void dsl_join(ClientContext *client_context, char *val_var1, char *pos_var1, char *val_var2,
-        char *pos_var2, char *pos_out_var1, char *pos_out_var2, JoinType type,
-        Message *send_message);
+void dsl_join(ClientContext *client_context, JoinType type, char *val_var1, char *pos_var1,
+        char *val_var2, char *pos_var2, char *pos_out_var1, char *pos_out_var2,
+        Message *send_message) {
+    Result *val1 = result_lookup(client_context, val_var1);
+    if (val1 == NULL) {
+        send_message->status = VARIABLE_NOT_FOUND;
+        return;
+    }
+    if (val1->type != INT) {
+        send_message->status = WRONG_VARIABLE_TYPE;
+        return;
+    }
+
+    Result *pos1 = result_lookup(client_context, pos_var1);
+    if (pos1 == NULL) {
+        send_message->status = VARIABLE_NOT_FOUND;
+        return;
+    }
+    if (pos1->type != POS) {
+        send_message->status = WRONG_VARIABLE_TYPE;
+        return;
+    }
+
+    int *values1 = val1->values.int_values;
+    unsigned int values1_count = val1->num_tuples;
+
+    unsigned int *positions1 = pos1->values.pos_values;
+    unsigned int positions1_count = pos1->num_tuples;
+
+    if (values1_count != positions1_count) {
+        send_message->status = TUPLE_COUNT_MISMATCH;
+        return;
+    }
+
+    Result *val2 = result_lookup(client_context, val_var2);
+    if (val2 == NULL) {
+        send_message->status = VARIABLE_NOT_FOUND;
+        return;
+    }
+    if (val2->type != INT) {
+        send_message->status = WRONG_VARIABLE_TYPE;
+        return;
+    }
+
+    Result *pos2 = result_lookup(client_context, pos_var2);
+    if (pos2 == NULL) {
+        send_message->status = VARIABLE_NOT_FOUND;
+        return;
+    }
+    if (pos2->type != POS) {
+        send_message->status = WRONG_VARIABLE_TYPE;
+        return;
+    }
+
+    int *values2 = val2->values.int_values;
+    unsigned int values2_count = val2->num_tuples;
+
+    unsigned int *positions2 = pos2->values.pos_values;
+    unsigned int positions2_count = pos2->num_tuples;
+
+    if (values2_count != positions2_count) {
+        send_message->status = TUPLE_COUNT_MISMATCH;
+        return;
+    }
+
+    unsigned int *result1 = NULL;
+    unsigned int result1_count = 0;
+
+    unsigned int *result2 = NULL;
+    unsigned int result2_count = 0;
+
+    if (values1_count > 0 && values2_count > 0) {
+        PosVector pos_out1;
+        pos_vector_init(&pos_out1, pos1->num_tuples);
+
+        PosVector pos_out2;
+        pos_vector_init(&pos_out2, pos2->num_tuples);
+
+        switch (type) {
+        case HASH:
+            join_hash(values1, positions1, values1_count, values2, positions2, values2_count,
+                    &pos_out1, &pos_out2);
+            break;
+        case NESTED_LOOP:
+            join_nested_loop(values1, positions1, values1_count, values2, positions2, values2_count,
+                    &pos_out1, &pos_out2);
+            break;
+        case SORT_MERGE:
+            join_sort_merge(values1, positions1, values1_count, values2, positions2, values2_count,
+                    &pos_out1, &pos_out2);
+            break;
+        }
+
+        if (pos_out1.size == 0) {
+            pos_vector_destroy(&pos_out1);
+        } else {
+            result1 = pos_out1.data;
+            result1_count = pos_out1.size;
+            if (result1_count < pos_out1.capacity) {
+                result1 = realloc(result1, result1_count * sizeof(unsigned int));
+            }
+        }
+
+        if (pos_out2.size == 0) {
+            pos_vector_destroy(&pos_out2);
+        } else {
+            result2 = pos_out2.data;
+            result2_count = pos_out2.size;
+            if (result2_count < pos_out2.capacity) {
+                result2 = realloc(result2, result2_count * sizeof(unsigned int));
+            }
+        }
+    }
+
+    pos_result_put(client_context, pos_out_var1, pos1->source, result1, result1_count);
+
+    pos_result_put(client_context, pos_out_var2, pos2->source, result2, result2_count);
+}
 
 void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {

@@ -55,6 +55,10 @@ void db_operator_log(DbOperator *query) {
     case RELATIONAL_UPDATE:
         break;
     case JOIN:
+        log_info("JOIN: %d, %s, %s, %s, %s -> %s, %s\n", query->fields.join.type,
+                query->fields.join.val_var1, query->fields.join.pos_var1,
+                query->fields.join.val_var2, query->fields.join.pos_var2,
+                query->fields.join.pos_out_var1, query->fields.join.pos_out_var2);
         break;
     case MIN:
         log_info("MIN: %s(%d) -> %s\n", query->fields.min.col_hdl.name,
@@ -157,6 +161,10 @@ void db_operator_execute(DbOperator *query, Message *message) {
     case RELATIONAL_UPDATE:
         break;
     case JOIN:
+        dsl_join(query->context, query->fields.join.type, query->fields.join.val_var1,
+                query->fields.join.pos_var1, query->fields.join.val_var2,
+                query->fields.join.pos_var2, query->fields.join.pos_out_var1,
+                query->fields.join.pos_out_var2, message);
         break;
     case MIN:
         dsl_min(query->context, &query->fields.min.col_hdl, query->fields.min.val_out_var, message);
@@ -251,6 +259,12 @@ void db_operator_free(DbOperator *query) {
     case RELATIONAL_UPDATE:
         break;
     case JOIN:
+        free(query->fields.join.val_var1);
+        free(query->fields.join.pos_var1);
+        free(query->fields.join.val_var2);
+        free(query->fields.join.pos_var2);
+        free(query->fields.join.pos_out_var1);
+        free(query->fields.join.pos_out_var2);
         break;
     case MIN:
         free(query->fields.min.col_hdl.name);

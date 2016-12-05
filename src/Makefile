@@ -61,7 +61,7 @@ $(DEPSDIR)/stamp $(BUILDSTAMP):
 client: client.o hash_table.o utils.o vector.o
 	$(CC) $(CFLAGS) $(DEPCFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
-server: btree.o client_context.o db_manager.o db_operator.o dsl.o hash_table.o parser.o scheduler.o server.o sorted.o utils.o vector.o
+server: btree.o client_context.o db_manager.o db_operator.o dsl.o hash_table.o join.o parser.o scheduler.o server.o sorted.o utils.o vector.o
 	$(CC) $(CFLAGS) $(DEPCFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 clean:

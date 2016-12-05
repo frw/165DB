@@ -88,6 +88,16 @@ typedef struct RelationalInsertOperator {
     IntVector values;
 } RelationalInsertOperator;
 
+typedef struct JoinOperator {
+    JoinType type;
+    char *val_var1;
+    char *pos_var1;
+    char *val_var2;
+    char *pos_var2;
+    char *pos_out_var1;
+    char *pos_out_var2;
+} JoinOperator;
+
 typedef struct MinOperator {
     GeneralizedColumnHandle col_hdl;
     char *val_out_var;
@@ -181,6 +191,7 @@ typedef union OperatorFields {
 	SelectPosOperator select_pos;
 	FetchOperator fetch;
     RelationalInsertOperator relational_insert;
+    JoinOperator join;
     MinOperator min;
     MinPosOperator min_pos;
     MaxOperator max;

@@ -152,7 +152,8 @@ static inline bool is_records_ascending(Record *records, size_t count) {
     return true;
 }
 
-static inline void _radix_sort_indices_lsb(Record *dst, Record *begin, Record *end, Record *begin1, unsigned maxshift) {
+static inline void _radix_sort_indices_lsb(Record *dst, Record *begin, Record *end, Record *begin1,
+        unsigned maxshift) {
     size_t size = end - begin;
     if (is_records_ascending(begin, size)) {
         if (dst != begin) {
@@ -190,7 +191,8 @@ static inline void _radix_sort_indices_lsb(Record *dst, Record *begin, Record *e
     }
 }
 
-static inline void _radix_sort_indices_msb2(Record *dst, Record *begin, Record *end, Record *begin1, unsigned shift) {
+static inline void _radix_sort_indices_msb2(Record *dst, Record *begin, Record *end, Record *begin1,
+        unsigned shift) {
     size_t size = end - begin;
     if (is_records_ascending(begin, size)) {
         if (dst != begin) {
@@ -219,7 +221,8 @@ static inline void _radix_sort_indices_msb2(Record *dst, Record *begin, Record *
     }
 }
 
-static inline void _radix_sort_indices_msb(Record *dst, Record *begin, Record *end, Record *begin1, unsigned shift) {
+static inline void _radix_sort_indices_msb(Record *dst, Record *begin, Record *end, Record *begin1,
+        unsigned shift) {
     size_t size = end - begin;
     if (is_records_ascending(begin, size)) {
         if (dst != begin) {
@@ -248,22 +251,31 @@ static inline void _radix_sort_indices_msb(Record *dst, Record *begin, Record *e
     }
 }
 
-void radix_sort_indices(int *values, unsigned int *indices, size_t size) {
+void radix_sort_indices(int *values_in, unsigned int *indices_in, int *values_out,
+        unsigned int *indices_out, size_t size) {
     Record *buf = malloc(size * sizeof(Record));
     Record *buf1 = malloc(size * sizeof(Record));
 
-    for (size_t i = 0; i < size; i++) {
-        Record *r = &buf[i];
-        r->value = values[i];
-        r->position = i;
+    if (indices_in == NULL) {
+        for (size_t i = 0; i < size; i++) {
+            Record *r = &buf[i];
+            r->value = values_in[i];
+            r->position = i;
+        }
+    } else {
+        for (size_t i = 0; i < size; i++) {
+            Record *r = &buf[i];
+            r->value = values_in[i];
+            r->position = indices_in[i];
+        }
     }
 
     _radix_sort_indices_msb(buf, buf, buf + size, buf1, (sizeof(int) - 1) * 8);
 
     for (size_t i = 0; i < size; i++) {
         Record *r = &buf[i];
-        values[i] = r->value;
-        indices[i] = r->position;
+        values_out[i] = r->value;
+        indices_out[i] = r->position;
     }
 
     free(buf);

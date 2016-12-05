@@ -209,21 +209,22 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
             }
         } else {
             IntVector *leading_values_vector = index->clustered_columns + column->order;
-            int_vector_deep_copy(leading_values_vector, &column->values);
+            int_vector_init(leading_values_vector, column->values.capacity);
             int *leading_values = leading_values_vector->data;
 
             PosVector *positions_vector = index->clustered_positions;
-            pos_vector_init(positions_vector, leading_values_vector->capacity);
+            pos_vector_init(positions_vector, column->values.capacity);
             unsigned int *sorted_positions = positions_vector->data;
 
-            radix_sort_indices(leading_values, sorted_positions, size);
+            radix_sort_indices(column->values.data, NULL, leading_values, sorted_positions, size);
 
+            leading_values_vector->size = size;
             positions_vector->size = size;
 
             for (unsigned int i = 0; i < num_columns; i++) {
                 if (i != column->order) {
                     IntVector *values_vector = index->clustered_columns + i;
-                    int_vector_init(values_vector, leading_values_vector->capacity);
+                    int_vector_init(values_vector, column->values.capacity);
 
                     int *sorted_values = values_vector->data;
                     int *unsorted_values = table->columns[i].values.data;
@@ -261,11 +262,9 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
             }
         } else {
             int *values = malloc(size * sizeof(int));
-            memcpy(values, column->values.data, size * sizeof(int));
-
             unsigned int *positions = malloc(size * sizeof(unsigned int));
 
-            radix_sort_indices(values, positions, size);
+            radix_sort_indices(column->values.data, NULL, values, positions, size);
 
             switch (type) {
             case BTREE:

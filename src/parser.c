@@ -502,14 +502,96 @@ DbOperator *parse_relational_insert(char *handle, char *insert_arguments, Messag
     return dbo;
 }
 
-DbOperator *parse_min(char *handle, char *max_arguments, Message *message) {
+DbOperator *parse_join(char *handle, char *join_arguments, Message *message) {
     if (handle == NULL) {
         message->status = WRONG_NUMBER_OF_HANDLES;
         return NULL;
     }
 
-    char *min_arguments_stripped = strip_parenthesis(max_arguments);
-    if (min_arguments_stripped == max_arguments) {
+    char *join_arguments_stripped = strip_parenthesis(join_arguments);
+    if (join_arguments_stripped == join_arguments) {
+        // Parenthesis was not stripped.
+        message->status = INCORRECT_FORMAT;
+        return NULL;
+    }
+
+    char **join_arguments_index = &join_arguments_stripped;
+    MessageStatus *status = &message->status;
+
+    char *val_var1 = next_token(join_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+    char *pos_var1 = next_token(join_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+    char *val_var2 = next_token(join_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+    char *pos_var2 = next_token(join_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+    char *join_type = next_token(join_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+
+    if (message->status == WRONG_NUMBER_OF_ARGUMENTS) {
+        // Not enough arguments.
+        return NULL;
+    }
+
+    if (join_arguments_stripped != NULL) {
+        // Too many arguments.
+        message->status = WRONG_NUMBER_OF_ARGUMENTS;
+        return NULL;
+    }
+
+    if (!is_valid_name(val_var1) || !is_valid_name(pos_var1)
+            || !is_valid_name(val_var2) || !is_valid_name(pos_var2)) {
+        message->status = INCORRECT_FORMAT;
+        return NULL;
+    }
+
+    JoinType type;
+    if (strcmp(join_type, "hash") == 0) {
+        type = HASH;
+    } else if (strcmp(join_type, "nested-loop") == 0) {
+        type = NESTED_LOOP;
+    } else if (strcmp(join_type, "sort-merge") == 0) {
+        type = SORT_MERGE;
+    } else {
+        message->status = UNKNOWN_COMMAND;
+        return NULL;
+    }
+
+    char *pos_out_var1 = next_token(&handle, ",", status, WRONG_NUMBER_OF_HANDLES);
+    char *pos_out_var2 = next_token(&handle, ",", status, WRONG_NUMBER_OF_HANDLES);
+
+    if (message->status == WRONG_NUMBER_OF_HANDLES) {
+        // Not enough handles.
+        return NULL;
+    }
+
+    if (handle != NULL) {
+        // Too many handles.
+        message->status = WRONG_NUMBER_OF_HANDLES;
+        return NULL;
+    }
+
+    if (!is_valid_name(pos_out_var1) || !is_valid_name(pos_out_var2)) {
+        message->status = INCORRECT_FORMAT;
+        return NULL;
+    }
+
+    DbOperator *dbo = malloc(sizeof(DbOperator));
+    dbo->type = JOIN;
+    dbo->fields.join.type = type;
+    dbo->fields.join.val_var1 = strdup(val_var1);
+    dbo->fields.join.pos_var1 = strdup(pos_var1);
+    dbo->fields.join.val_var2 = strdup(val_var2);
+    dbo->fields.join.pos_var2 = strdup(pos_var2);
+    dbo->fields.join.pos_out_var1 = strdup(pos_out_var1);
+    dbo->fields.join.pos_out_var2 = strdup(pos_out_var2);
+    return dbo;
+}
+
+DbOperator *parse_min(char *handle, char *min_arguments, Message *message) {
+    if (handle == NULL) {
+        message->status = WRONG_NUMBER_OF_HANDLES;
+        return NULL;
+    }
+
+    char *min_arguments_stripped = strip_parenthesis(min_arguments);
+    if (min_arguments_stripped == min_arguments) {
         // Parenthesis was not stripped.
         message->status = INCORRECT_FORMAT;
         return NULL;
@@ -1015,6 +1097,9 @@ DbOperator *parse_command(char *query_command, Message *message, ClientContext *
     } else if (strncmp(query_command, "relational_insert", 17) == 0) {
         query_command += 17;
         dbo = parse_relational_insert(handle, query_command, message);
+    } else if (strncmp(query_command, "join", 4) == 0) {
+        query_command += 4;
+        dbo = parse_join(handle, query_command, message);
     } else if (strncmp(query_command, "min", 3) == 0) {
         query_command += 3;
         dbo = parse_min(handle, query_command, message);

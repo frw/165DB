@@ -70,7 +70,25 @@ static inline bool check_dependency(DbOperator *dbo, HashTable *output_table) {
         break;
 
     case JOIN:
-        // TODO: Implement batched joins.
+        query = hash_table_get(output_table, dbo->fields.join.val_var1);
+        if (query != NULL) {
+            return false;
+        }
+
+        query = hash_table_get(output_table, dbo->fields.join.pos_var1);
+        if (query != NULL) {
+            return false;
+        }
+
+        query = hash_table_get(output_table, dbo->fields.join.val_var2);
+        if (query != NULL) {
+            return false;
+        }
+
+        query = hash_table_get(output_table, dbo->fields.join.pos_var2);
+        if (query != NULL) {
+            return false;
+        }
         break;
 
     case MIN:
@@ -194,7 +212,17 @@ static inline void register_output(DbOperator *dbo, HashTable *output_table) {
         break;
 
     case JOIN:
-        // TODO: Implement batched joins.
+        query = hash_table_put(output_table, dbo->fields.join.pos_out_var1, dbo);
+        if (query != NULL) {
+            db_operator_free(query);
+        }
+
+        if (strcmp(dbo->fields.join.pos_out_var2, dbo->fields.join.pos_out_var1) != 0) {
+            query = hash_table_put(output_table, dbo->fields.join.pos_out_var2, dbo);
+            if (query != NULL) {
+                db_operator_free(query);
+            }
+        }
         break;
 
     case MIN:
