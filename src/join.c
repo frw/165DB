@@ -2,9 +2,11 @@
 #include "utils.h"
 #include "vector.h"
 
+#define RADIX_THRESHOLD 134217728
+
 #define NESTED_BLOCK_SIZE 32768
 
-static inline void probe(unsigned int *table, unsigned int *counts, unsigned int *offsets,
+static inline void radix_probe(unsigned int *table, unsigned int *counts, unsigned int *offsets,
         int *values2, unsigned int *positions2, unsigned int count2, PosVector *pos_out1,
         PosVector *pos_out2) {
     for (unsigned int i = 0; i < count2; i++) {
@@ -24,7 +26,7 @@ static inline void probe(unsigned int *table, unsigned int *counts, unsigned int
     }
 }
 
-static inline void build(int *values1, unsigned int *positions1, unsigned int *table,
+static inline void radix_build(int *values1, unsigned int *positions1, unsigned int *table,
         unsigned int count1, int *values2, unsigned int *positions2, unsigned int count2,
         PosVector *pos_out1, PosVector *pos_out2) {
     unsigned int counts[0x100] = { 0 };
@@ -44,19 +46,19 @@ static inline void build(int *values1, unsigned int *positions1, unsigned int *t
         table[ends[values1[i] & 0xFF]++] = positions1[i];
     }
 
-    probe(table, counts, offsets, values2, positions2, count2, pos_out1, pos_out2);
+    radix_probe(table, counts, offsets, values2, positions2, count2, pos_out1, pos_out2);
 }
 
-static void partition(int *values1, int *values1_buf, unsigned int *positions1,
+static void radix_partition(int *values1, int *values1_buf, unsigned int *positions1,
         unsigned int *positions1_buf, unsigned int count1, int *values2, int *values2_buf,
         unsigned int *positions2, unsigned int *positions2_buf, unsigned int count2,
         PosVector *pos_out1, PosVector *pos_out2, unsigned int shift, bool alloc_buf) {
     if (shift == 0) {
         if (count1 <= count2) {
-            build(values1, positions1, positions1_buf, count1, values2, positions2, count2,
+            radix_build(values1, positions1, positions1_buf, count1, values2, positions2, count2,
                     pos_out1, pos_out2);
         } else {
-            build(values2, positions2, positions2_buf, count2, values1, positions1, count1,
+            radix_build(values2, positions2, positions2_buf, count2, values1, positions1, count1,
                     pos_out2, pos_out1);
         }
         return;
@@ -125,7 +127,7 @@ static void partition(int *values1, int *values1_buf, unsigned int *positions1,
             unsigned int offset1 = o1[i];
             unsigned int offset2 = o2[i];
 
-            partition(values1_buf + offset1, values1 + offset1, positions1_buf + offset1,
+            radix_partition(values1_buf + offset1, values1 + offset1, positions1_buf + offset1,
                     positions1 + offset1, count1, values2_buf + offset2, values2 + offset2,
                     positions2_buf + offset2, positions2 + offset2, count2, pos_out1, pos_out2,
                     shift - 8, false);
@@ -141,15 +143,16 @@ static void partition(int *values1, int *values1_buf, unsigned int *positions1,
     }
 }
 
-void join_hash(int *values1, unsigned int *positions1, unsigned int count1, int *values2,
-        unsigned int *positions2, unsigned int count2, PosVector *pos_out1, PosVector *pos_out2) {
+static inline void join_hash_radix(int *values1, unsigned int *positions1, unsigned int count1,
+        int *values2, unsigned int *positions2, unsigned int count2, PosVector *pos_out1,
+        PosVector *pos_out2) {
     int *values1_buf = malloc(count1 * sizeof(int));
     unsigned int *positions1_buf = malloc(count1 * sizeof(unsigned int));
 
     int *values2_buf = malloc(count2 * sizeof(int));
     unsigned int *positions2_buf = malloc(count2 * sizeof(unsigned int));
 
-    partition(values1, values1_buf, positions1, positions1_buf, count1, values2, values2_buf,
+    radix_partition(values1, values1_buf, positions1, positions1_buf, count1, values2, values2_buf,
             positions2, positions2_buf, count2, pos_out1, pos_out2, (sizeof(int) - 1) * 8, true);
 
     free(values1_buf);
@@ -157,6 +160,93 @@ void join_hash(int *values1, unsigned int *positions1, unsigned int count1, int 
 
     free(values2_buf);
     free(positions2_buf);
+}
+
+static inline void static_count_probe(int *table_values, unsigned int *table_positions,
+        unsigned int *counts, unsigned int *offsets, unsigned int mask, int *values2,
+        unsigned int *positions2, unsigned int count2, PosVector *pos_out1, PosVector *pos_out2) {
+    for (unsigned int i = 0; i < count2; i++) {
+        int val2 = values2[i];
+        unsigned int bucket = val2 & mask;
+        unsigned int count = counts[bucket];
+
+        if (count > 0) {
+            unsigned int pos2 = positions2[i];
+
+            unsigned int start = offsets[bucket];
+            unsigned int end = start + count;
+            for (unsigned int j = start; j < end; j++) {
+                int val1 = table_values[j];
+
+                if (val1 == val2) {
+                    pos_vector_append(pos_out1, table_positions[j]);
+                    pos_vector_append(pos_out2, pos2);
+                }
+            }
+        }
+    }
+}
+
+static inline void static_count_build(int *values1, unsigned int *positions1, unsigned int count1,
+        int *values2, unsigned int *positions2, unsigned int count2, PosVector *pos_out1,
+        PosVector *pos_out2) {
+    unsigned int table_size = round_up_power_of_two(count1);
+    unsigned int mask = table_size - 1;
+
+    unsigned int *counts = calloc(table_size, sizeof(unsigned int));
+    for (unsigned int i = 0; i < count1; i++) {
+        counts[values1[i] & mask]++;
+    }
+
+    unsigned int *offsets = malloc(table_size * sizeof(unsigned int));
+    unsigned int *ends = malloc(table_size * sizeof(unsigned int));
+    unsigned int accum1 = 0;
+    for (unsigned int i = 0; i < table_size; i++) {
+        offsets[i] = ends[i] = accum1;
+        accum1 += counts[i];
+    }
+
+    int *table_values = malloc(count1 * sizeof(int));
+    unsigned int *table_positions = malloc(count1 * sizeof(unsigned int));
+
+    for (unsigned int i = 0; i < count1; i++) {
+        int value = values1[i];
+        unsigned int index = ends[value & mask]++;
+        table_values[index] = value;
+        table_positions[index] = positions1[i];
+    }
+
+    free(ends);
+
+    static_count_probe(table_values, table_positions, counts, offsets, mask, values2, positions2, count2,
+            pos_out1, pos_out2);
+
+    free(counts);
+    free(offsets);
+
+    free(table_values);
+    free(table_positions);
+}
+
+static inline void join_hash_static_count(int *values1, unsigned int *positions1, unsigned int count1,
+        int *values2, unsigned int *positions2, unsigned int count2, PosVector *pos_out1,
+        PosVector *pos_out2) {
+    if (count1 <= count2) {
+        static_count_build(values1, positions1, count1, values2, positions2, count2, pos_out1,
+                pos_out2);
+    } else {
+        static_count_build(values2, positions2, count2, values1, positions1, count1, pos_out2,
+                pos_out1);
+    }
+}
+
+void join_hash(int *values1, unsigned int *positions1, unsigned int count1, int *values2,
+        unsigned int *positions2, unsigned int count2, PosVector *pos_out1, PosVector *pos_out2) {
+    if (count1 >= RADIX_THRESHOLD && count2 >= RADIX_THRESHOLD) {
+        join_hash_radix(values1, positions1, count1, values2, positions2, count2, pos_out1, pos_out2);
+    } else {
+        join_hash_static_count(values1, positions1, count1, values2, positions2, count2, pos_out1, pos_out2);
+    }
 }
 
 void join_nested_loop(int *values1, unsigned int *positions1, unsigned int count1, int *values2,
