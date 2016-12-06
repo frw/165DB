@@ -10,6 +10,7 @@ static inline BTreeNode *btree_leaf_node_create() {
     BTreeNode *node = malloc(sizeof(BTreeNode));
     node->leaf = true;
     node->fields.leaf.size = 0;
+    node->fields.leaf.prev = NULL;
     node->fields.leaf.next = NULL;
     return node;
 }
@@ -104,6 +105,7 @@ static BTreeNode *btree_node_load(BTreeLeafNode **head, BTreeLeafNode **tail, FI
             return NULL;
         }
 
+        leaf->prev = *tail;
         leaf->next = NULL;
 
         if (*head == NULL) {
@@ -142,7 +144,8 @@ static BTreeNode *btree_node_load(BTreeLeafNode **head, BTreeLeafNode **tail, FI
     return node;
 }
 
-void btree_init(BTreeIndex *index, bool sequential, int *values, unsigned int *positions, unsigned int size) {
+void btree_init(BTreeIndex *index, bool sequential, int *values, unsigned int *positions,
+        unsigned int size) {
     index->sequential = sequential;
 
     if (size == 0) {
@@ -191,6 +194,7 @@ void btree_init(BTreeIndex *index, bool sequential, int *values, unsigned int *p
         } else {
             memcpy(leaf->positions, positions + offset, num_values * sizeof(unsigned int));
         }
+        leaf->prev = tail;
         leaf->size = num_values;
 
         if (i == 0) {
@@ -333,7 +337,8 @@ static inline int btree_node_first_value(BTreeNode *node) {
     }
 }
 
-static inline BTreeNode *btree_leaf_node_split(BTreeIndex *index, BTreeLeafNode *leaf, unsigned int split) {
+static inline BTreeNode *btree_leaf_node_split(BTreeIndex *index, BTreeLeafNode *leaf,
+        unsigned int split) {
     BTreeNode *new = btree_leaf_node_create();
     BTreeLeafNode *new_leaf = &new->fields.leaf;
 
@@ -342,14 +347,17 @@ static inline BTreeNode *btree_leaf_node_split(BTreeIndex *index, BTreeLeafNode 
     memcpy(new_leaf->values, leaf->values + split, new_size * sizeof(int));
     memcpy(new_leaf->positions, leaf->positions + split, new_size * sizeof(unsigned int));
     new_leaf->size = new_size;
+    new_leaf->prev = leaf;
     new_leaf->next = leaf->next;
+
+    if (leaf->next != NULL) {
+        leaf->next->prev = new_leaf;
+    } else {
+        index->tail = new_leaf;
+    }
 
     leaf->size = split;
     leaf->next = new_leaf;
-
-    if (index->tail == leaf) {
-        index->tail = new_leaf;
-    }
 
     return new;
 }
@@ -369,7 +377,8 @@ static inline BTreeNode *btree_internal_node_split(BTreeInternalNode *internal, 
     return new;
 }
 
-static BTreeNode *btree_node_insert(BTreeIndex *index, BTreeNode *root, int value, unsigned int *position) {
+static BTreeNode *btree_node_insert(BTreeIndex *index, BTreeNode *root, int value,
+        unsigned int *position) {
     if (root->leaf) {
         BTreeLeafNode *leaf = &root->fields.leaf;
         BTreeNode *new_leaf = NULL;
@@ -468,6 +477,150 @@ void btree_insert(BTreeIndex *index, int value, unsigned int *position) {
     }
 
     index->size++;
+}
+
+static inline void btree_values_remove(int *values, unsigned int size, unsigned int idx) {
+    if (idx < size - 1) {
+        memmove(values + idx, values + idx + 1, (size - idx - 1) * sizeof(int));
+    }
+}
+
+static inline void btree_positions_remove(unsigned int *positions, unsigned int size,
+        unsigned int idx) {
+    if (idx < size - 1) {
+        memmove(positions + idx, positions + idx + 1, (size - idx - 1) * sizeof(unsigned int));
+    }
+}
+
+static inline void btree_children_remove(BTreeNode **children, unsigned int size, unsigned int idx) {
+    if (idx < size - 1) {
+        memmove(children + idx, children + idx + 1, (size - idx - 1) * sizeof(BTreeNode*));
+    }
+}
+
+static inline unsigned int btree_node_size(BTreeNode *node) {
+    if (node->leaf) {
+        return node->fields.leaf.size;
+    } else {
+        return node->fields.internal.size;
+    }
+}
+
+static bool btree_node_remove(BTreeIndex *index, BTreeNode *root, int value, unsigned int position,
+        unsigned int *positions_map, unsigned int *position_ptr) {
+    if (root->leaf) {
+        BTreeLeafNode *leaf = &root->fields.leaf;
+
+        unsigned int idx = binary_search_left(leaf->values, leaf->size, value);
+        if (idx == leaf->size) {
+            return -1;
+        }
+
+        for (; idx < leaf->size && leaf->values[idx] == value; idx++) {
+            unsigned int pos = leaf->positions[idx];
+            if (index->sequential) {
+                pos = positions_map[pos];
+            }
+
+            if (pos == position) {
+                if (position_ptr != NULL) {
+                    *position_ptr = leaf->positions[idx];
+                }
+
+                btree_values_remove(leaf->values, leaf->size, idx);
+
+                if (index->sequential) {
+                    for (BTreeLeafNode *n = leaf->next; n != NULL; n = n->next) {
+                        for (unsigned int i = 0; i < n->size; i++) {
+                            n->positions[i]--;
+                        }
+                    }
+                } else {
+                    btree_positions_remove(leaf->positions, leaf->size, idx);
+                }
+
+                leaf->size--;
+
+                if (leaf->size == 0) {
+                    if (leaf->prev != NULL) {
+                        leaf->prev->next = leaf->next;
+                    } else {
+                        index->head = leaf->next;
+                    }
+
+                    if (leaf->next != NULL) {
+                        leaf->next->prev = leaf->prev;
+                    } else {
+                        index->tail = leaf->prev;
+                    }
+                }
+
+                return true;
+            }
+        }
+
+        return false;
+    } else {
+        BTreeInternalNode *internal = &root->fields.internal;
+
+        unsigned int idx = binary_search_left(internal->values, internal->size, value);
+        if (idx == internal->size) {
+            idx--;
+        } else if (internal->values[idx] > value) {
+            if (idx > 0) {
+                idx--;
+            } else {
+                return false;
+            }
+        } else if (idx > 0) {
+            idx--;
+        }
+
+        for (; idx < internal->size && internal->values[idx] <= value; idx++) {
+            BTreeNode *child = internal->children[idx];
+
+            bool removed = btree_node_remove(index, child, value, position, positions_map,
+                    position_ptr);
+            if (removed) {
+                if (btree_node_size(child) == 0) {
+                    free(child);
+
+                    btree_values_remove(internal->values, internal->size, idx);
+                    btree_children_remove(internal->children, internal->size, idx);
+
+                    internal->size--;
+                } else {
+                    internal->values[idx] = btree_node_first_value(child);
+                }
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+bool btree_remove(BTreeIndex *index, int value, unsigned int position, unsigned int *positions_map,
+        unsigned int *position_ptr) {
+    BTreeNode *root = index->root;
+
+    if (root == NULL) {
+        return false;
+    }
+
+    bool removed = btree_node_remove(index, root, value, position, positions_map, position_ptr);
+    if (removed) {
+        if (btree_node_size(root) == 0) {
+            free(root);
+
+            index->root = NULL;
+        }
+
+        index->size--;
+    }
+
+    return removed;
 }
 
 static BTreeLeafNode *btree_node_descend_left(BTreeNode *root, int value) {
@@ -637,12 +790,14 @@ unsigned int btree_select_range(BTreeIndex *index, int low, int high, unsigned i
         return right_position - left_position + 1;
     } else {
         if (left_leaf == right_leaf) {
-            memcpy(result, left_leaf->positions + left_idx, (right_idx - left_idx + 1) * sizeof(unsigned int));
+            memcpy(result, left_leaf->positions + left_idx,
+                    (right_idx - left_idx + 1) * sizeof(unsigned int));
             return right_idx - left_idx + 1;
         } else {
             unsigned int result_count = 0;
 
-            memcpy(result, left_leaf->positions + left_idx, (left_leaf->size - left_idx) * sizeof(unsigned int));
+            memcpy(result, left_leaf->positions + left_idx,
+                    (left_leaf->size - left_idx) * sizeof(unsigned int));
             result_count += left_leaf->size - left_idx;
 
             for (BTreeLeafNode *node = left_leaf->next; node != right_leaf; node = node->next) {
@@ -650,7 +805,8 @@ unsigned int btree_select_range(BTreeIndex *index, int low, int high, unsigned i
                 result_count += node->size;
             }
 
-            memcpy(result + result_count, right_leaf->positions, (right_idx + 1) * sizeof(unsigned int));
+            memcpy(result + result_count, right_leaf->positions,
+                    (right_idx + 1) * sizeof(unsigned int));
             result_count += right_idx + 1;
 
             return result_count;

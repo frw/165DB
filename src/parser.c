@@ -502,6 +502,109 @@ DbOperator *parse_relational_insert(char *handle, char *insert_arguments, Messag
     return dbo;
 }
 
+DbOperator *parse_relational_delete(char *handle, char *delete_arguments, Message *message) {
+    if (handle != NULL) {
+        message->status = WRONG_NUMBER_OF_HANDLES;
+        return NULL;
+    }
+
+    char *delete_arguments_stripped = strip_parenthesis(delete_arguments);
+    if (delete_arguments_stripped == delete_arguments) {
+        // Parenthesis was not stripped.
+        message->status = INCORRECT_FORMAT;
+        return NULL;
+    }
+
+    char **delete_arguments_index = &delete_arguments_stripped;
+    MessageStatus *status = &message->status;
+
+    char *table_fqn = next_token(delete_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+    char *pos_var = next_token(delete_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+
+    if (message->status == WRONG_NUMBER_OF_ARGUMENTS) {
+        // Not enough arguments.
+        return NULL;
+    }
+
+    if (delete_arguments_stripped != NULL) {
+        // Too many arguments.
+        message->status = WRONG_NUMBER_OF_ARGUMENTS;
+        return NULL;
+    }
+
+    if (!is_valid_fqn(table_fqn, 1)) {
+        message->status = INCORRECT_FORMAT;
+        return NULL;
+    }
+
+    if (!is_valid_name(pos_var)) {
+        message->status = INCORRECT_FORMAT;
+        return NULL;
+    }
+
+    DbOperator *dbo = malloc(sizeof(DbOperator));
+    dbo->type = RELATIONAL_DELETE;
+    dbo->fields.relational_delete.table_fqn = strdup(table_fqn);
+    dbo->fields.relational_delete.pos_var = strdup(pos_var);
+    return dbo;
+}
+
+DbOperator *parse_relational_update(char *handle, char *update_arguments, Message *message) {
+    if (handle != NULL) {
+        message->status = WRONG_NUMBER_OF_HANDLES;
+        return NULL;
+    }
+
+    char *update_arguments_stripped = strip_parenthesis(update_arguments);
+    if (update_arguments_stripped == update_arguments) {
+        // Parenthesis was not stripped.
+        message->status = INCORRECT_FORMAT;
+        return NULL;
+    }
+
+    char **update_arguments_index = &update_arguments_stripped;
+    MessageStatus *status = &message->status;
+
+    char *column_fqn = next_token(update_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+    char *pos_var = next_token(update_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+    char *val = next_token(update_arguments_index, ",", status, WRONG_NUMBER_OF_ARGUMENTS);
+
+    if (message->status == WRONG_NUMBER_OF_ARGUMENTS) {
+        // Not enough arguments.
+        return NULL;
+    }
+
+    if (update_arguments_stripped != NULL) {
+        // Too many arguments.
+        message->status = WRONG_NUMBER_OF_ARGUMENTS;
+        return NULL;
+    }
+
+    if (!is_valid_fqn(column_fqn, 2)) {
+        message->status = INCORRECT_FORMAT;
+        return NULL;
+    }
+
+    if (!is_valid_name(pos_var)) {
+        message->status = INCORRECT_FORMAT;
+        return NULL;
+    }
+
+    char *endptr;
+    int value = strtoi(val, &endptr);
+    if (endptr == val || *endptr != '\0') {
+        message->status = INCORRECT_FORMAT;
+        return NULL;
+    }
+
+    DbOperator *dbo = malloc(sizeof(DbOperator));
+    dbo->type = RELATIONAL_UPDATE;
+    dbo->fields.relational_update.column_fqn = strdup(column_fqn);
+    dbo->fields.relational_update.pos_var = strdup(pos_var);
+    dbo->fields.relational_update.value = value;
+    return dbo;
+}
+
 DbOperator *parse_join(char *handle, char *join_arguments, Message *message) {
     if (handle == NULL) {
         message->status = WRONG_NUMBER_OF_HANDLES;
@@ -1097,6 +1200,12 @@ DbOperator *parse_command(char *query_command, Message *message, ClientContext *
     } else if (strncmp(query_command, "relational_insert", 17) == 0) {
         query_command += 17;
         dbo = parse_relational_insert(handle, query_command, message);
+    } else if (strncmp(query_command, "relational_delete", 17) == 0) {
+        query_command += 17;
+        dbo = parse_relational_delete(handle, query_command, message);
+    } else if (strncmp(query_command, "relational_update", 17) == 0) {
+        query_command += 17;
+        dbo = parse_relational_update(handle, query_command, message);
     } else if (strncmp(query_command, "join", 4) == 0) {
         query_command += 4;
         dbo = parse_join(handle, query_command, message);

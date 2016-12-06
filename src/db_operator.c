@@ -51,8 +51,12 @@ void db_operator_log(DbOperator *query) {
         log_info("\n");
         break;
     case RELATIONAL_DELETE:
+        log_info("RELATIONAL_DELETE: %s, %s\n", query->fields.relational_delete.table_fqn,
+                query->fields.relational_delete.pos_var);
         break;
     case RELATIONAL_UPDATE:
+        log_info("RELATIONAL_UPDATE: %s, %s, %d\n", query->fields.relational_update.column_fqn,
+                query->fields.relational_update.pos_var, query->fields.relational_update.value);
         break;
     case JOIN:
         log_info("JOIN: %d, %s, %s, %s, %s -> %s, %s\n", query->fields.join.type,
@@ -157,8 +161,13 @@ void db_operator_execute(DbOperator *query, Message *message) {
                 &query->fields.relational_insert.values, message);
         break;
     case RELATIONAL_DELETE:
+        dsl_relational_delete(query->context, query->fields.relational_delete.table_fqn,
+                query->fields.relational_delete.pos_var, message);
         break;
     case RELATIONAL_UPDATE:
+        dsl_relational_update(query->context, query->fields.relational_update.column_fqn,
+                query->fields.relational_update.pos_var, query->fields.relational_update.value,
+                message);
         break;
     case JOIN:
         dsl_join(query->context, query->fields.join.type, query->fields.join.val_var1,
@@ -255,8 +264,12 @@ void db_operator_free(DbOperator *query) {
         int_vector_destroy(&query->fields.relational_insert.values);
         break;
     case RELATIONAL_DELETE:
+        free(query->fields.relational_delete.table_fqn);
+        free(query->fields.relational_delete.pos_var);
         break;
     case RELATIONAL_UPDATE:
+        free(query->fields.relational_update.column_fqn);
+        free(query->fields.relational_update.pos_var);
         break;
     case JOIN:
         free(query->fields.join.val_var1);

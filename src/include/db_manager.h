@@ -49,6 +49,8 @@ struct Table {
     Column *columns;
     unsigned int columns_count;
     unsigned int columns_capacity;
+    unsigned int rows_count;
+    BoolVector *deleted_rows;
     pthread_rwlock_t rwlock;
     Db *db;
     Table *next;

@@ -37,6 +37,11 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    unsigned int *positions = malloc(42 * sizeof(unsigned int));
+    for (int i = 0; i < 42; i++) {
+        positions[i] = 41 - i;
+    }
+
     unsigned int count = 0;
     for (BTreeLeafNode *n = index.head; n != NULL; n = n->next) {
         printf("New Node\n");
@@ -47,6 +52,39 @@ int main(int argc, char *argv[]) {
     }
     printf("Count: %u\n", count);
 
+    bool success;
+
+    for (unsigned int i = 27; i <= 27; i++) {
+        success = btree_remove(&index, 5, i, positions, &pos);
+        if (success) {
+            printf("Removed: %d, %u\n", 5, pos);
+        } else {
+            printf("Remove failed!\n");
+        }
+    }
+
+    /*
+    for (int i = 3; i <= 5; i+= 2) {
+        for (int j = 0; j < 8; j++) {
+            bool success = btree_remove(&index, i, &pos);
+            if (success) {
+                printf("Removed: %d, %u\n", i, pos);
+            } else {
+                printf("Remove failed!\n");
+            }
+        }
+    }
+    */
+
+    count = 0;
+    for (BTreeLeafNode *n = index.tail; n != NULL; n = n->prev) {
+        printf("New Node\n");
+        count += n->size;
+        for (int i = n->size - 1; i >= 0; i--) {
+            printf("%d, %u\n", n->values[i], n->positions[i]);
+        }
+    }
+    printf("Count: %u\n", count);
 
     /*
     for (int i = -53; i <= 50; i++) {
@@ -57,7 +95,7 @@ int main(int argc, char *argv[]) {
     int *results = malloc(NUM_VALUES * sizeof(int));
     unsigned int results_count;
 
-    results_count = btree_select_range(&index, 3, 6, results);
+    results_count = btree_select_range(&index, 3, 8, results);
     printf("%u\n", results_count);
     for (unsigned int i = 0; i < results_count; i++) {
         if (i > 0) {
@@ -70,6 +108,8 @@ int main(int argc, char *argv[]) {
     printf("%d\n", btree_min(&index, NULL));
 
     printf("%d\n", btree_max(&index, NULL));
+
+    free(results);
 
     btree_destroy(&index);
 

@@ -6,7 +6,8 @@
 #include "utils.h"
 #include "vector.h"
 
-void sorted_init(SortedIndex *index, bool sequential, int *values, unsigned int *positions, unsigned int size) {
+void sorted_init(SortedIndex *index, bool sequential, int *values, unsigned int *positions,
+        unsigned int size) {
     index->sequential = sequential;
 
     if (size == 0) {
@@ -82,6 +83,42 @@ void sorted_insert(SortedIndex *index, int value, unsigned int *position) {
     }
 }
 
+bool sorted_remove(SortedIndex *index, int value, unsigned int position,
+        unsigned int *positions_map, unsigned int *position_ptr) {
+    unsigned int idx = binary_search_right(index->values.data, index->values.size, value);
+    if (idx == index->values.size) {
+        return -1;
+    }
+
+    for (; idx < index->values.size && index->values.data[idx] == value; idx++) {
+        unsigned int pos;
+        if (index->sequential) {
+            pos = positions_map[idx];
+        } else {
+            pos = index->positions.data[idx];
+        }
+
+        if (pos == position) {
+            int_vector_remove(&index->values, idx);
+
+            if (index->sequential) {
+                if (position_ptr != NULL) {
+                    *position_ptr = idx;
+                }
+            } else {
+                if (position_ptr != NULL) {
+                    *position_ptr = index->positions.data[idx];
+                }
+                pos_vector_remove(&index->positions, idx);
+            }
+
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static inline int sorted_search_left(IntVector *values, int value) {
     unsigned int idx = binary_search_left(values->data, values->size, value);
     if (idx == values->size) {
@@ -132,7 +169,8 @@ unsigned int sorted_select_higher(SortedIndex *index, int low, unsigned int *res
             result[i - position] = i;
         }
     } else {
-        memcpy(result, index->positions.data + idx, (index->values.size - idx) * sizeof(unsigned int));
+        memcpy(result, index->positions.data + idx,
+                (index->values.size - idx) * sizeof(unsigned int));
     }
 
     return index->values.size - idx;
@@ -157,7 +195,8 @@ unsigned int sorted_select_range(SortedIndex *index, int low, int high, unsigned
             result[i - left_position] = i;
         }
     } else {
-        memcpy(result, index->positions.data + left_idx, (right_idx - left_idx + 1) * sizeof(unsigned int));
+        memcpy(result, index->positions.data + left_idx,
+                (right_idx - left_idx + 1) * sizeof(unsigned int));
     }
 
     return right_idx - left_idx + 1;

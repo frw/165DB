@@ -20,11 +20,6 @@ typedef struct Record {
 } Record;
 
 /**
- * Sorts an array of integers in ascending order.
- */
-void radix_sort(int *values, size_t size);
-
-/**
  * Sorts an array of integers in ascending order, and stores the indices corresponding to the original array.
  */
 void radix_sort_indices(int *values_in, unsigned int *indices_in, int *values_out,

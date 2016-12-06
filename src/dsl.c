@@ -62,17 +62,30 @@ void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
         }
     }
 
+    unsigned int rows_count = col_vals[0].size;
+
     for (unsigned int i = 0; i < num_columns; i++) {
         IntVector *dst = &columns[i]->values;
-        IntVector *src = &col_vals[i];
+        IntVector *src = col_vals + i;
 
         if (dst->size == 0) {
             int_vector_destroy(dst);
             int_vector_shallow_copy(dst, src);
             int_vector_init(src, 0);
         } else {
-            int_vector_concat(&columns[i]->values, &col_vals[i]);
+            int_vector_concat(dst, src);
         }
+    }
+
+    table->rows_count += rows_count;
+
+    BoolVector *deleted_rows = table->deleted_rows;
+    if (deleted_rows != NULL) {
+        unsigned int new_size = deleted_rows->size + rows_count;
+
+        bool_vector_ensure_capacity(deleted_rows, new_size);
+        memset(deleted_rows->data + deleted_rows->size, 0, rows_count * sizeof(bool));
+        deleted_rows->size = new_size;
     }
 
     index_rebuild_all(table);
@@ -80,51 +93,82 @@ void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
     pthread_rwlock_unlock(&table->rwlock);
 }
 
-static inline unsigned int dsl_select_lower(int *values, unsigned int values_count, int high,
-        unsigned int *result) {
+static inline unsigned int dsl_select_lower(int *values, unsigned int values_count,
+        bool *deleted_rows, int high, unsigned int *result) {
     unsigned int result_count = 0;
-    for (unsigned int i = 0; i < values_count; i++) {
-        result[result_count] = i;
-        result_count += values[i] < high;
+    if (deleted_rows == NULL) {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += values[i] < high;
+        }
+    } else {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += !deleted_rows[i] & (values[i] < high);
+        }
     }
     return result_count;
 }
 
-static inline unsigned int dsl_select_higher(int *values, unsigned int values_count, int low,
-        unsigned int *result) {
+static inline unsigned int dsl_select_higher(int *values, unsigned int values_count,
+        bool *deleted_rows, int low, unsigned int *result) {
     unsigned int result_count = 0;
-    for (unsigned int i = 0; i < values_count; i++) {
-        result[result_count] = i;
-        result_count += values[i] >= low;
+    if (deleted_rows == NULL) {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += values[i] >= low;
+        }
+    } else {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += !deleted_rows[i] & (values[i] >= low);
+        }
     }
     return result_count;
 }
 
-static inline unsigned int dsl_select_equal(int *values, unsigned int values_count, int value,
-        unsigned int *result) {
+static inline unsigned int dsl_select_equal(int *values, unsigned int values_count,
+        bool *deleted_rows, int value, unsigned int *result) {
     unsigned int result_count = 0;
-    for (unsigned int i = 0; i < values_count; i++) {
-        result[result_count] = i;
-        result_count += values[i] == value;
+    if (deleted_rows == NULL) {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += values[i] == value;
+        }
+    } else {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += !deleted_rows[i] & (values[i] == value);
+        }
     }
     return result_count;
 }
 
-static inline unsigned int dsl_select_range(int *values, unsigned int values_count, int low,
-        int high, unsigned int *result) {
+static inline unsigned int dsl_select_range(int *values, unsigned int values_count,
+        bool *deleted_rows, int low, int high, unsigned int *result) {
     unsigned int result_count = 0;
-    for (unsigned int i = 0; i < values_count; i++) {
-        result[result_count] = i;
-        int value = values[i];
-        result_count += (value >= low) & (value < high);
+    if (deleted_rows == NULL) {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            int value = values[i];
+            result_count += (value >= low) & (value < high);
+        }
+    } else {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            int value = values[i];
+            result_count += !deleted_rows[i] & (value >= low) & (value < high);
+        }
     }
     return result_count;
 }
 
 void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, int low,
-bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
+        bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
     Column *source;
     pthread_rwlock_t *table_rwlock;
+    unsigned int rows_count;
+    bool *deleted_rows;
     int *values;
     unsigned int values_count;
     ColumnIndex *index;
@@ -134,8 +178,12 @@ bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message)
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
+        Table *table = column->table;
+
         source = column;
-        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
+        pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
+        rows_count = table->rows_count;
+        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -149,8 +197,11 @@ bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message)
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+
         source = NULL;
         table_rwlock = NULL;
+        rows_count = variable->num_tuples;
+        deleted_rows = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
         index = NULL;
@@ -158,18 +209,19 @@ bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message)
 
     unsigned int *result = NULL;
     unsigned int result_count = 0;
-    if (values_count > 0 && (!has_low || !has_high || low < high)) {
-        result = malloc(values_count * sizeof(unsigned int));
+    if (rows_count > 0 && (!has_low || !has_high || low < high)) {
+        result = malloc(rows_count * sizeof(unsigned int));
 
         if (index == NULL) {
             if (!has_low) {
-                result_count = dsl_select_lower(values, values_count, high, result);
+                result_count = dsl_select_lower(values, values_count, deleted_rows, high, result);
             } else if (!has_high) {
-                result_count = dsl_select_higher(values, values_count, low, result);
+                result_count = dsl_select_higher(values, values_count, deleted_rows, low, result);
             } else if (low == high - 1) {
-                result_count = dsl_select_equal(values, values_count, low, result);
+                result_count = dsl_select_equal(values, values_count, deleted_rows, low, result);
             } else {
-                result_count = dsl_select_range(values, values_count, low, high, result);
+                result_count = dsl_select_range(values, values_count, deleted_rows, low, high,
+                        result);
             }
         } else {
             switch (index->type) {
@@ -197,7 +249,7 @@ bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message)
         if (result_count == 0) {
             free(result);
             result = NULL;
-        } else if (result_count < values_count) {
+        } else if (result_count < rows_count) {
             result = realloc(result, result_count * sizeof(unsigned int));
         }
     }
@@ -251,7 +303,7 @@ static inline unsigned int dsl_select_pos_range(unsigned int *positions, int *va
 }
 
 void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var, int low,
-bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
+        bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
     Result *pos = result_lookup(client_context, pos_var);
     if (pos == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
@@ -327,8 +379,6 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
         return;
     }
 
-    pthread_rwlock_rdlock(&column->table->rwlock);
-
     unsigned int *positions = pos->values.pos_values;
     unsigned int positions_count = pos->num_tuples;
 
@@ -336,6 +386,9 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
     if (positions_count > 0) {
         int *values;
         Column *source = pos->source;
+
+        pthread_rwlock_rdlock(&column->table->rwlock);
+
         if (source != NULL) {
             ColumnIndex *source_index = source->index;
 
@@ -352,49 +405,60 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
         for (unsigned int i = 0; i < positions_count; i++) {
             result[i] = values[positions[i]];
         }
-    }
 
-    pthread_rwlock_unlock(&column->table->rwlock);
+        pthread_rwlock_unlock(&column->table->rwlock);
+    }
 
     int_result_put(client_context, val_out_var, result, positions_count);
 }
 
-static inline void dsl_insert(Column *column, IntVector *values) {
-    int value = values->data[column->order];
+static void dsl_insert(Table *table, int *values) {
+    for (unsigned int i = 0; i < table->columns_capacity; i++) {
+        Column *column = table->columns + i;
 
-    int_vector_append(&column->values, value);
+        int value = values[i];
 
-    ColumnIndex *index = column->index;
-    if (index != NULL) {
-        if (index->clustered) {
-            unsigned int position;
+        int_vector_append(&column->values, value);
 
-            switch (index->type) {
-            case BTREE:
-                btree_insert(&index->fields.btree, value, &position);
-                break;
-            case SORTED:
-                sorted_insert(&index->fields.sorted, value, &position);
-                break;
-            }
+        ColumnIndex *index = column->index;
+        if (index != NULL) {
+            if (index->clustered) {
+                unsigned int position;
 
-            pos_vector_insert(index->clustered_positions, position, column->values.size - 1);
+                switch (index->type) {
+                case BTREE:
+                    btree_insert(&index->fields.btree, value, &position);
+                    break;
+                case SORTED:
+                    sorted_insert(&index->fields.sorted, value, &position);
+                    break;
+                }
 
-            for (unsigned int i = 0; i < values->size; i++) {
-                int_vector_insert(index->clustered_columns + i, position, values->data[i]);
-            }
-        } else {
-            unsigned int position = column->values.size - 1;
+                pos_vector_insert(index->clustered_positions, position, column->values.size - 1);
 
-            switch (index->type) {
-            case BTREE:
-                btree_insert(&index->fields.btree, value, &position);
-                break;
-            case SORTED:
-                sorted_insert(&index->fields.sorted, value, &position);
-                break;
+                for (unsigned int j = 0; j < table->columns_capacity; j++) {
+                    int_vector_insert(index->clustered_columns + j, position, values[j]);
+                }
+            } else {
+                unsigned int position = column->values.size - 1;
+
+                switch (index->type) {
+                case BTREE:
+                    btree_insert(&index->fields.btree, value, &position);
+                    break;
+                case SORTED:
+                    sorted_insert(&index->fields.sorted, value, &position);
+                    break;
+                }
             }
         }
+    }
+
+    table->rows_count++;
+
+    BoolVector *deleted_rows = table->deleted_rows;
+    if (deleted_rows != NULL) {
+        bool_vector_append(deleted_rows, false);
     }
 }
 
@@ -418,17 +482,224 @@ void dsl_relational_insert(char *table_fqn, IntVector *values, Message *send_mes
         return;
     }
 
+    dsl_insert(table, values->data);
+
+    pthread_rwlock_unlock(&table->rwlock);
+}
+
+static bool dsl_delete(Table *table, unsigned int position) {
+    BoolVector *deleted_rows = table->deleted_rows;
+
+    if (deleted_rows != NULL && deleted_rows->data[position]) {
+        return false;
+    }
+
     for (unsigned int i = 0; i < table->columns_capacity; i++) {
-        dsl_insert(&table->columns[i], values);
+        Column *column = table->columns + i;
+
+        ColumnIndex *index = column->index;
+        if (index != NULL) {
+            int value = column->values.data[position];
+
+            if (index->clustered) {
+                bool removed = false;
+                unsigned int clustered_position;
+
+                switch (index->type) {
+                case BTREE:
+                    removed = btree_remove(&index->fields.btree, value, position,
+                            index->clustered_positions->data, &clustered_position);
+                    break;
+                case SORTED:
+                    removed = sorted_remove(&index->fields.sorted, value, position,
+                            index->clustered_positions->data, &clustered_position);
+                    break;
+                }
+
+                if (removed) {
+                    pos_vector_remove(index->clustered_positions, clustered_position);
+
+                    for (unsigned int i = 0; i < table->columns_capacity; i++) {
+                        int_vector_remove(index->clustered_columns + i, clustered_position);
+                    }
+                }
+            } else {
+                switch (index->type) {
+                case BTREE:
+                    btree_remove(&index->fields.btree, value, position, NULL, NULL);
+                    break;
+                case SORTED:
+                    sorted_remove(&index->fields.sorted, value, position, NULL, NULL);
+                    break;
+                }
+            }
+        }
+    }
+
+    table->rows_count--;
+
+    if (deleted_rows == NULL) {
+        table->deleted_rows = deleted_rows = malloc(sizeof(BoolVector));
+
+        IntVector *first_column = &table->columns[0].values;
+
+        bool_vector_init(deleted_rows, first_column->capacity);
+        memset(deleted_rows->data, 0, first_column->size * sizeof(bool));
+        deleted_rows->size = first_column->size;
+    }
+
+    deleted_rows->data[position] = true;
+
+    return true;
+}
+
+void dsl_relational_delete(ClientContext *client_context, char *table_fqn, char *pos_var,
+        Message *send_message) {
+    Result *pos = result_lookup(client_context, pos_var);
+    if (pos == NULL) {
+        send_message->status = VARIABLE_NOT_FOUND;
+        return;
+    }
+    if (pos->type != POS) {
+        send_message->status = WRONG_VARIABLE_TYPE;
+        return;
+    }
+
+    Table *table = table_lookup(table_fqn);
+    if (table == NULL) {
+        send_message->status = TABLE_NOT_FOUND;
+        return;
+    }
+
+    unsigned int *positions = pos->values.pos_values;
+    unsigned int positions_count = pos->num_tuples;
+
+    if (positions_count == 0) {
+        return;
+    }
+
+    pthread_rwlock_wrlock(&table->rwlock);
+
+    if (table->columns_count != table->columns_capacity) {
+        send_message->status = TABLE_NOT_FULLY_INITIALIZED;
+        pthread_rwlock_unlock(&table->rwlock);
+        return;
+    }
+
+    Column *source = pos->source;
+
+    if (source != NULL) {
+        ColumnIndex *source_index = source->index;
+
+        if (source_index != NULL && source_index->clustered) {
+            unsigned int *mapped_positions = malloc(positions_count * sizeof(unsigned int));
+
+            unsigned int *clustered_positions = source_index->clustered_positions->data;
+            for (unsigned int i = 0; i < positions_count; i++) {
+                mapped_positions[i] = clustered_positions[positions[i]];
+            }
+
+            for (unsigned int i = 0; i < positions_count; i++) {
+                dsl_delete(table, mapped_positions[i]);
+            }
+
+            free(mapped_positions);
+        } else {
+            for (unsigned int i = 0; i < positions_count; i++) {
+                dsl_delete(table, positions[i]);
+            }
+        }
+    } else {
+        for (unsigned int i = 0; i < positions_count; i++) {
+            dsl_delete(table, positions[i]);
+        }
     }
 
     pthread_rwlock_unlock(&table->rwlock);
 }
 
-void dsl_relational_delete(ClientContext *client_context, char *table_fqn, char *pos_var,
-        Message *send_message);
+static inline void dsl_update(Table *table, unsigned int position, unsigned int column, int value) {
+    if (dsl_delete(table, position)) {
+        int updated_values[table->columns_capacity];
+
+        for (unsigned int i = 0; i < table->columns_capacity; i++) {
+            if (i != column) {
+                updated_values[i] = table->columns[i].values.data[position];
+            }
+        }
+
+        updated_values[column] = value;
+
+        dsl_insert(table, updated_values);
+    }
+}
+
 void dsl_relational_update(ClientContext *client_context, char *column_fqn, char *pos_var,
-        int value, Message *send_message);
+        int value, Message *send_message) {
+    Result *pos = result_lookup(client_context, pos_var);
+    if (pos == NULL) {
+        send_message->status = VARIABLE_NOT_FOUND;
+        return;
+    }
+    if (pos->type != POS) {
+        send_message->status = WRONG_VARIABLE_TYPE;
+        return;
+    }
+
+    Column *column = column_lookup(column_fqn);
+    if (column == NULL) {
+        send_message->status = COLUMN_NOT_FOUND;
+        return;
+    }
+
+    unsigned int *positions = pos->values.pos_values;
+    unsigned int positions_count = pos->num_tuples;
+
+    if (positions_count == 0) {
+        return;
+    }
+
+    Table *table = column->table;
+
+    pthread_rwlock_wrlock(&table->rwlock);
+
+    if (table->columns_count != table->columns_capacity) {
+        send_message->status = TABLE_NOT_FULLY_INITIALIZED;
+        pthread_rwlock_unlock(&table->rwlock);
+        return;
+    }
+
+    Column *source = pos->source;
+
+    if (source != NULL) {
+        ColumnIndex *source_index = source->index;
+
+        if (source_index != NULL && source_index->clustered) {
+            unsigned int *mapped_positions = malloc(positions_count * sizeof(unsigned int));
+
+            unsigned int *clustered_positions = source_index->clustered_positions->data;
+            for (unsigned int i = 0; i < positions_count; i++) {
+                mapped_positions[i] = clustered_positions[positions[i]];
+            }
+
+            for (unsigned int i = 0; i < positions_count; i++) {
+                dsl_update(table, mapped_positions[i], column->order, value);
+            }
+
+            free(mapped_positions);
+        } else {
+            for (unsigned int i = 0; i < positions_count; i++) {
+                dsl_update(table, positions[i], column->order, value);
+            }
+        }
+    } else {
+        for (unsigned int i = 0; i < positions_count; i++) {
+            dsl_update(table, positions[i], column->order, value);
+        }
+    }
+
+    pthread_rwlock_unlock(&table->rwlock);
+}
 
 void dsl_join(ClientContext *client_context, JoinType type, char *val_var1, char *pos_var1,
         char *val_var2, char *pos_var2, char *pos_out_var1, char *pos_out_var2,
@@ -552,6 +823,8 @@ void dsl_join(ClientContext *client_context, JoinType type, char *val_var1, char
 void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
     pthread_rwlock_t *table_rwlock;
+    unsigned int rows_count;
+    bool *deleted_rows;
     int *values;
     unsigned int values_count;
     ColumnIndex *index;
@@ -561,7 +834,11 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
-        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
+        Table *table = column->table;
+
+        pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
+        rows_count = table->rows_count;
+        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -575,13 +852,16 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+
         table_rwlock = NULL;
+        rows_count = variable->num_tuples;
+        deleted_rows = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
         index = NULL;
     }
 
-    if (values_count == 0) {
+    if (rows_count == 0) {
         send_message->status = EMPTY_VECTOR;
         if (table_rwlock != NULL) {
             pthread_rwlock_unlock(table_rwlock);
@@ -591,11 +871,28 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 
     int min_value = 0;
     if (index == NULL) {
-        min_value = values[0];
+        if (deleted_rows == NULL) {
+            min_value = values[0];
 
-        for (unsigned int i = 1; i < values_count; i++) {
-            int value = values[i];
-            min_value = value < min_value ? value : min_value;
+            for (unsigned int i = 1; i < values_count; i++) {
+                int value = values[i];
+                min_value = value < min_value ? value : min_value;
+            }
+        } else {
+            unsigned int i = 0;
+
+            for (; i < values_count; i++) {
+                if (!deleted_rows[i]) {
+                    break;
+                }
+            }
+
+            min_value = values[i++];
+
+            for (; i < values_count; i++) {
+                int value = values[i];
+                min_value = (!deleted_rows[i] & (value < min_value)) ? value : min_value;
+            }
         }
     } else {
         switch (index->type) {
@@ -634,6 +931,7 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+
         source = pos->source;
         positions = pos->values.pos_values;
         positions_count = pos->num_tuples;
@@ -643,6 +941,8 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
     }
 
     pthread_rwlock_t *table_rwlock;
+    unsigned int rows_count;
+    bool *deleted_rows;
     int *values;
     unsigned int values_count;
     ColumnIndex *index;
@@ -652,8 +952,12 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
+        Table *table = column->table;
+
         source = column;
         pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
+        rows_count = table->rows_count;
+        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -667,13 +971,16 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+
         table_rwlock = NULL;
+        rows_count = variable->num_tuples;
+        deleted_rows = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
         index = NULL;
     }
 
-    if (values_count == 0) {
+    if (rows_count == 0) {
         send_message->status = EMPTY_VECTOR;
         if (table_rwlock != NULL) {
             pthread_rwlock_unlock(table_rwlock);
@@ -692,20 +999,41 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             return;
         }
 
-        min_position = 0;
-        min_value = values[0];
+        if (deleted_rows == NULL) {
+            min_position = 0;
+            min_value = values[0];
 
-        for (unsigned int i = 1; i < values_count; i++) {
-            int value = values[i];
+            for (unsigned int i = 1; i < values_count; i++) {
+                int value = values[i];
 
-            bool smaller = value < min_value;
+                bool smaller = value < min_value;
 
-            min_position = smaller ? i : min_position;
-            min_value = smaller ? value : min_value;
-        }
+                min_position = smaller ? i : min_position;
+                min_value = smaller ? value : min_value;
+            }
 
-        if (positions != NULL) {
-            min_position = positions[min_position];
+            if (positions != NULL) {
+                min_position = positions[min_position];
+            }
+        } else {
+            min_position = 0;
+
+            for (; min_position < values_count; min_position++) {
+                if (!deleted_rows[min_position]) {
+                    break;
+                }
+            }
+
+            min_value = values[min_position];
+
+            for (unsigned int i = min_position + 1; i < values_count; i++) {
+                int value = values[i];
+
+                bool smaller = !deleted_rows[i] & (value < min_value);
+
+                min_position = smaller ? i : min_position;
+                min_value = smaller ? value : min_value;
+            }
         }
     } else {
         switch (index->type) {
@@ -736,6 +1064,8 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
     pthread_rwlock_t *table_rwlock;
+    unsigned int rows_count;
+    bool *deleted_rows;
     int *values;
     unsigned int values_count;
     ColumnIndex *index;
@@ -745,7 +1075,11 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
-        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
+        Table *table = column->table;
+
+        pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
+        rows_count = table->rows_count;
+        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -759,13 +1093,16 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+
         table_rwlock = NULL;
+        rows_count = variable->num_tuples;
+        deleted_rows = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
         index = NULL;
     }
 
-    if (values_count == 0) {
+    if (rows_count == 0) {
         send_message->status = EMPTY_VECTOR;
         if (table_rwlock != NULL) {
             pthread_rwlock_unlock(table_rwlock);
@@ -775,11 +1112,28 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 
     int max_value = 0;
     if (index == NULL) {
-        max_value = values[0];
+        if (deleted_rows == NULL) {
+            max_value = values[0];
 
-        for (unsigned int i = 1; i < values_count; i++) {
-            int value = values[i];
-            max_value = value > max_value ? value : max_value;
+            for (unsigned int i = 1; i < values_count; i++) {
+                int value = values[i];
+                max_value = value > max_value ? value : max_value;
+            }
+        } else {
+            unsigned int i = 0;
+
+            for (; i < values_count; i++) {
+                if (!deleted_rows[i]) {
+                    break;
+                }
+            }
+
+            max_value = values[i++];
+
+            for (; i < values_count; i++) {
+                int value = values[i];
+                max_value = (!deleted_rows[i] & (value > max_value)) ? value : max_value;
+            }
         }
     } else {
         switch (index->type) {
@@ -818,6 +1172,7 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+
         source = pos->source;
         positions = pos->values.pos_values;
         positions_count = pos->num_tuples;
@@ -827,6 +1182,8 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
     }
 
     pthread_rwlock_t *table_rwlock;
+    unsigned int rows_count;
+    bool *deleted_rows;
     int *values;
     unsigned int values_count;
     ColumnIndex *index;
@@ -836,8 +1193,12 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
+        Table *table = column->table;
+
         source = column;
-        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
+        pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
+        rows_count = table->rows_count;
+        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -851,13 +1212,16 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+
         table_rwlock = NULL;
+        rows_count = variable->num_tuples;
+        deleted_rows = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
         index = NULL;
     }
 
-    if (values_count == 0) {
+    if (rows_count == 0) {
         send_message->status = EMPTY_VECTOR;
         if (table_rwlock != NULL) {
             pthread_rwlock_unlock(table_rwlock);
@@ -876,20 +1240,41 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
             return;
         }
 
-        max_position = 0;
-        max_value = values[0];
+        if (deleted_rows == NULL) {
+            max_position = 0;
+            max_value = values[0];
 
-        for (unsigned int i = 1; i < values_count; i++) {
-            int value = values[i];
+            for (unsigned int i = 1; i < values_count; i++) {
+                int value = values[i];
 
-            bool larger = value > max_value;
+                bool larger = value > max_value;
 
-            max_position = larger ? i : max_position;
-            max_value = larger ? value : max_value;
-        }
+                max_position = larger ? i : max_position;
+                max_value = larger ? value : max_value;
+            }
 
-        if (positions != NULL) {
-            max_position = positions[max_position];
+            if (positions != NULL) {
+                max_position = positions[max_position];
+            }
+        } else {
+            max_position = 0;
+
+            for (; max_position < values_count; max_position++) {
+                if (!deleted_rows[max_position]) {
+                    break;
+                }
+            }
+
+            max_value = values[max_position];
+
+            for (unsigned int i = max_position + 1; i < values_count; i++) {
+                int value = values[i];
+
+                bool larger = !deleted_rows[i] & (value > max_value);
+
+                max_position = larger ? i : max_position;
+                max_value = larger ? value : max_value;
+            }
         }
     } else {
         switch (index->type) {
@@ -920,6 +1305,7 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
     pthread_rwlock_t *table_rwlock;
+    bool *deleted_rows;
     int *values;
     unsigned int values_count;
     if (col_hdl->is_column_fqn) {
@@ -928,7 +1314,10 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
-        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
+        Table *table = column->table;
+
+        pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
+        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
     } else {
@@ -941,14 +1330,22 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+
         table_rwlock = NULL;
+        deleted_rows = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
     }
 
     long long int result = 0;
-    for (unsigned int i = 0; i < values_count; i++) {
-        result += values[i];
+    if (deleted_rows == NULL) {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result += values[i];
+        }
+    } else {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result += !deleted_rows[i] * values[i];
+        }
     }
 
     if (table_rwlock != NULL) {
@@ -964,6 +1361,7 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
     pthread_rwlock_t *table_rwlock;
+    bool *deleted_rows;
     int *values;
     unsigned int values_count;
     if (col_hdl->is_column_fqn) {
@@ -972,7 +1370,10 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = COLUMN_NOT_FOUND;
             return;
         }
-        pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
+        Table *table = column->table;
+
+        pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
+        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
     } else {
@@ -985,7 +1386,9 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             send_message->status = WRONG_VARIABLE_TYPE;
             return;
         }
+
         table_rwlock = NULL;
+        deleted_rows = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
     }
@@ -999,8 +1402,14 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
     }
 
     long long int sum = 0;
-    for (unsigned int i = 0; i < values_count; i++) {
-        sum += values[i];
+    if (deleted_rows == NULL) {
+        for (unsigned int i = 0; i < values_count; i++) {
+            sum += values[i];
+        }
+    } else {
+        for (unsigned int i = 0; i < values_count; i++) {
+            sum += !deleted_rows[i] * values[i];
+        }
     }
     double result = (double) sum / (double) values_count;
 

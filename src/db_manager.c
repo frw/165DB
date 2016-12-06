@@ -124,6 +124,8 @@ void table_create(char *name, char *db_name, unsigned int num_columns, Message *
     table->columns = malloc(num_columns * sizeof(Column));
     table->columns_count = 0;
     table->columns_capacity = num_columns;
+    table->rows_count = 0;
+    table->deleted_rows = NULL;
     pthread_rwlock_init(&table->rwlock, NULL);
     table->db = db;
     table->next = db->tables;
@@ -176,13 +178,25 @@ void column_create(char *name, char *table_fqn, Message *send_message) {
     free(column_fqn);
 }
 
+static inline void filter_removed(int *dst_values, unsigned int *dst_positions, int *values,
+        bool *deleted_rows, unsigned int values_count, unsigned int rows_count) {
+    unsigned int j = 0;
+    for (unsigned int i = 0; i < values_count && j < rows_count; i++) {
+        dst_values[j] = values[i];
+        dst_positions[j] = i;
+        j += !deleted_rows[i];
+    }
+}
+
 static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clustered) {
+    Table *table = column->table;
+
     ColumnIndex *index = malloc(sizeof(ColumnIndex));
     index->type = type;
     index->clustered = clustered;
     index->column = column;
 
-    unsigned int size = column->values.size;
+    unsigned int rows_count = table->rows_count;
 
     if (clustered) {
         Table *table = column->table;
@@ -192,7 +206,7 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
         index->clustered_columns = malloc(num_columns * sizeof(IntVector));
         index->num_columns = num_columns;
 
-        if (size == 0) {
+        if (rows_count == 0) {
             pos_vector_init(index->clustered_positions, 0);
 
             for (unsigned int i = 0; i < num_columns; i++) {
@@ -216,10 +230,18 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
             pos_vector_init(positions_vector, column->values.capacity);
             unsigned int *sorted_positions = positions_vector->data;
 
-            radix_sort_indices(column->values.data, NULL, leading_values, sorted_positions, size);
+            bool *deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
+            if (deleted_rows == NULL) {
+                radix_sort_indices(column->values.data, NULL, leading_values, sorted_positions, rows_count);
+            } else {
+                filter_removed(leading_values, sorted_positions, column->values.data, deleted_rows, column->values.size, rows_count);
 
-            leading_values_vector->size = size;
-            positions_vector->size = size;
+                radix_sort_indices(leading_values, sorted_positions, leading_values, sorted_positions, rows_count);
+            }
+
+
+            leading_values_vector->size = rows_count;
+            positions_vector->size = rows_count;
 
             for (unsigned int i = 0; i < num_columns; i++) {
                 if (i != column->order) {
@@ -229,20 +251,20 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
                     int *sorted_values = values_vector->data;
                     int *unsorted_values = table->columns[i].values.data;
 
-                    for (unsigned int j = 0; j < size; j++) {
+                    for (unsigned int j = 0; j < rows_count; j++) {
                         sorted_values[j] = unsorted_values[sorted_positions[j]];
                     }
 
-                    values_vector->size = size;
+                    values_vector->size = rows_count;
                 }
             }
 
             switch (type) {
             case BTREE:
-                btree_init(&index->fields.btree, true, leading_values, NULL, size);
+                btree_init(&index->fields.btree, true, leading_values, NULL, rows_count);
                 break;
             case SORTED:
-                sorted_init(&index->fields.sorted, true, leading_values, NULL, size);
+                sorted_init(&index->fields.sorted, true, leading_values, NULL, rows_count);
                 break;
             }
         }
@@ -251,7 +273,7 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
         index->clustered_columns = NULL;
         index->num_columns = 0;
 
-        if (size == 0) {
+        if (rows_count == 0) {
             switch (type) {
             case BTREE:
                 btree_init(&index->fields.btree, false, NULL, NULL, 0);
@@ -261,17 +283,26 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
                 break;
             }
         } else {
-            int *values = malloc(size * sizeof(int));
-            unsigned int *positions = malloc(size * sizeof(unsigned int));
+            int *values = malloc(rows_count * sizeof(int));
+            unsigned int *positions = malloc(rows_count * sizeof(unsigned int));
 
-            radix_sort_indices(column->values.data, NULL, values, positions, size);
+            bool *deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
+            if (deleted_rows == NULL) {
+                radix_sort_indices(column->values.data, NULL, values, positions, rows_count);
+            } else {
+                filter_removed(values, positions, column->values.data, deleted_rows, column->values.size, rows_count);
+
+                radix_sort_indices(values, positions, values, positions, rows_count);
+            }
+
+            radix_sort_indices(column->values.data, NULL, values, positions, rows_count);
 
             switch (type) {
             case BTREE:
-                btree_init(&index->fields.btree, false, values, positions, size);
+                btree_init(&index->fields.btree, false, values, positions, rows_count);
                 break;
             case SORTED:
-                sorted_init(&index->fields.sorted, false, values, positions, size);
+                sorted_init(&index->fields.sorted, false, values, positions, rows_count);
                 break;
             }
 
@@ -381,6 +412,10 @@ static inline void table_free(Table *table) {
         column_free(&table->columns[i]);
     }
     free(table->columns);
+    if (table->deleted_rows != NULL) {
+        bool_vector_destroy(table->deleted_rows);
+        free(table->deleted_rows);
+    }
     pthread_rwlock_destroy(&table->rwlock);
     free(table);
 }
@@ -498,6 +533,23 @@ static inline bool table_save(Table *table, FILE *file) {
         }
     }
 
+    if (fwrite(&table->rows_count, sizeof(table->rows_count), 1, file) != 1) {
+        log_err("Unable to write table rows count\n");
+        return false;
+    }
+
+    bool has_deleted_rows = table->deleted_rows != NULL;
+
+    if (fwrite(&has_deleted_rows, sizeof(has_deleted_rows), 1, file) != 1) {
+        log_err("Unable to write table has_deleted_rows\n");
+        return false;
+    }
+
+    if (has_deleted_rows && !bool_vector_save(table->deleted_rows, file)) {
+        log_err("Unable to write table deleted rows\n");
+        return false;
+    }
+
     return true;
 }
 
@@ -592,7 +644,8 @@ static inline Db *db_load(char *db_name) {
         return NULL;
     }
     if (file_magic != FILE_MAGIC) {
-        log_err("Incorrect file magic: Expected 0x%08X but received 0x%08X", FILE_MAGIC, file_magic);
+        log_err("Incorrect file magic: Expected 0x%08X but received 0x%08X", FILE_MAGIC,
+                file_magic);
         fclose(file);
         return NULL;
     }
@@ -663,6 +716,7 @@ static inline Table *table_load(FILE *file) {
     table->columns = malloc(columns_capacity * sizeof(Column));
     table->columns_count = 0;
     table->columns_capacity = columns_capacity;
+    table->deleted_rows = NULL;
     pthread_rwlock_init(&table->rwlock, NULL);
 
     for (unsigned int i = 0; i < columns_count; i++) {
@@ -678,10 +732,34 @@ static inline Table *table_load(FILE *file) {
         table->columns_count++;
     }
 
+    if (fread(&table->rows_count, sizeof(table->rows_count), 1, file) != 1) {
+        log_err("Unable to read table rows count\n");
+        table_free(table);
+        return false;
+    }
+
+    bool has_deleted_rows;
+
+    if (fread(&has_deleted_rows, sizeof(has_deleted_rows), 1, file) != 1) {
+        log_err("Unable to read table has_deleted_rows\n");
+        table_free(table);
+        return false;
+    }
+
+    if (has_deleted_rows) {
+        table->deleted_rows = malloc(sizeof(BoolVector));
+        bool_vector_init(table->deleted_rows, 0);
+        if (!bool_vector_load(table->deleted_rows, file)) {
+            log_err("Unable to read table deleted rows\n");
+            table_free(table);
+            return false;
+        }
+    }
+
     return table;
 }
 
-static inline bool column_load(Column *column, unsigned int order, FILE *file)  {
+static inline bool column_load(Column *column, unsigned int order, FILE *file) {
     unsigned int name_length;
     if (fread(&name_length, sizeof(name_length), 1, file) != 1) {
         log_err("Unable to read column name length\n");

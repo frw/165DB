@@ -39,3 +39,14 @@
 #undef STRUCT_NAME
 #undef FUNCTION_NAME
 #undef TYPE
+
+// Vector containing bools.
+#define STRUCT_NAME BoolVector
+#define FUNCTION_NAME(x) bool_vector_##x
+#define TYPE bool
+
+#include "vector_tmpl.c"
+
+#undef STRUCT_NAME
+#undef FUNCTION_NAME
+#undef TYPE

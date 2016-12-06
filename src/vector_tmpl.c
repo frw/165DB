@@ -52,6 +52,13 @@ void FUNCTION_NAME(concat)(STRUCT_NAME *dst, STRUCT_NAME *src) {
     dst->size = new_size;
 }
 
+void FUNCTION_NAME(remove)(STRUCT_NAME *v, unsigned int idx) {
+    if (idx < v->size - 1) {
+        memmove(v->data + idx, v->data + idx + 1, (v->size - idx - 1) * sizeof(TYPE));
+    }
+    v->size--;
+}
+
 void FUNCTION_NAME(shallow_copy)(STRUCT_NAME *dst, STRUCT_NAME *src) {
     dst->data = src->data;
     dst->size = src->size;

@@ -8,13 +8,13 @@
 #include "vector.h"
 #include "utils.h"
 
-#define VALUES_COUNT 100000
+#define VALUES_COUNT 134217728
 
 void generate_random(unsigned int seed, int *values, size_t count) {
     srand(seed);
 
     for (size_t i = 0; i < count; i++) {
-        values[i] = rand() % 50;
+        values[i] = rand();
     }
 }
 
