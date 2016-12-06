@@ -1,9 +1,9 @@
 #ifndef VECTOR_H
 #define VECTOR_H
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 
 // Vector containing void pointers.
 #define STRUCT_NAME Vector

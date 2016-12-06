@@ -8,6 +8,7 @@
 #include "common.h"
 #include "hash_table.h"
 #include "message.h"
+#include "queue.h"
 #include "sorted.h"
 #include "vector.h"
 
@@ -50,6 +51,7 @@ struct Table {
     unsigned int columns_count;
     unsigned int columns_capacity;
     unsigned int rows_count;
+    Queue delete_queue;
     BoolVector *deleted_rows;
     pthread_rwlock_t rwlock;
     Db *db;

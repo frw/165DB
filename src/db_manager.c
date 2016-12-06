@@ -10,6 +10,7 @@
 #include "db_manager.h"
 #include "hash_table.h"
 #include "message.h"
+#include "queue.h"
 #include "utils.h"
 #include "vector.h"
 
@@ -125,6 +126,7 @@ void table_create(char *name, char *db_name, unsigned int num_columns, Message *
     table->columns_count = 0;
     table->columns_capacity = num_columns;
     table->rows_count = 0;
+    queue_init(&table->delete_queue);
     table->deleted_rows = NULL;
     pthread_rwlock_init(&table->rwlock, NULL);
     table->db = db;
@@ -412,6 +414,7 @@ static inline void table_free(Table *table) {
         column_free(&table->columns[i]);
     }
     free(table->columns);
+    queue_destroy(&table->delete_queue);
     if (table->deleted_rows != NULL) {
         bool_vector_destroy(table->deleted_rows);
         free(table->deleted_rows);
@@ -531,6 +534,11 @@ static inline bool table_save(Table *table, FILE *file) {
         if (!column_save(&table->columns[i], file)) {
             return false;
         }
+    }
+
+    if (!queue_save(&table->delete_queue, file)) {
+        log_err("Unable to write table delete queue\n");
+        return false;
     }
 
     if (fwrite(&table->rows_count, sizeof(table->rows_count), 1, file) != 1) {
@@ -716,6 +724,7 @@ static inline Table *table_load(FILE *file) {
     table->columns = malloc(columns_capacity * sizeof(Column));
     table->columns_count = 0;
     table->columns_capacity = columns_capacity;
+    queue_init(&table->delete_queue);
     table->deleted_rows = NULL;
     pthread_rwlock_init(&table->rwlock, NULL);
 
@@ -730,6 +739,12 @@ static inline Table *table_load(FILE *file) {
         column->table = table;
 
         table->columns_count++;
+    }
+
+    if (!queue_load(&table->delete_queue, file)) {
+        log_err("Unable to read table delete queue\n");
+        table_free(table);
+        return false;
     }
 
     if (fread(&table->rows_count, sizeof(table->rows_count), 1, file) != 1) {

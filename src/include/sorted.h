@@ -23,6 +23,9 @@ void sorted_insert(SortedIndex *index, int value, unsigned int *position);
 bool sorted_remove(SortedIndex *index, int value, unsigned int position,
         unsigned int *positions_map, unsigned int *position_ptr);
 
+bool sorted_search(SortedIndex *index, int value, unsigned int position,
+        unsigned int *positions_map, unsigned int *position_ptr);
+
 unsigned int sorted_select_lower(SortedIndex *index, int high, unsigned int *result);
 unsigned int sorted_select_higher(SortedIndex *index, int low, unsigned int *result);
 unsigned int sorted_select_range(SortedIndex *index, int low, int high, unsigned int *result);

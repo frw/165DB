@@ -85,12 +85,8 @@ void sorted_insert(SortedIndex *index, int value, unsigned int *position) {
 
 bool sorted_remove(SortedIndex *index, int value, unsigned int position,
         unsigned int *positions_map, unsigned int *position_ptr) {
-    unsigned int idx = binary_search_right(index->values.data, index->values.size, value);
-    if (idx == index->values.size) {
-        return -1;
-    }
-
-    for (; idx < index->values.size && index->values.data[idx] == value; idx++) {
+    for (unsigned int idx = binary_search_left(index->values.data, index->values.size, value);
+            idx < index->values.size && index->values.data[idx] == value; idx++) {
         unsigned int pos;
         if (index->sequential) {
             pos = positions_map[idx];
@@ -99,17 +95,37 @@ bool sorted_remove(SortedIndex *index, int value, unsigned int position,
         }
 
         if (pos == position) {
+            if (position_ptr != NULL) {
+                *position_ptr = index->sequential ? idx : pos;
+            }
+
             int_vector_remove(&index->values, idx);
 
-            if (index->sequential) {
-                if (position_ptr != NULL) {
-                    *position_ptr = idx;
-                }
-            } else {
-                if (position_ptr != NULL) {
-                    *position_ptr = index->positions.data[idx];
-                }
+            if (!index->sequential) {
                 pos_vector_remove(&index->positions, idx);
+            }
+
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool sorted_search(SortedIndex *index, int value, unsigned int position,
+        unsigned int *positions_map, unsigned int *position_ptr) {
+    for (unsigned int idx = binary_search_left(index->values.data, index->values.size, value);
+            idx < index->values.size && index->values.data[idx] == value; idx++) {
+        unsigned int pos;
+        if (index->sequential) {
+            pos = positions_map[idx];
+        } else {
+            pos = index->positions.data[idx];
+        }
+
+        if (pos == position) {
+            if (position_ptr != NULL) {
+                *position_ptr = index->sequential ? idx : pos;
             }
 
             return true;

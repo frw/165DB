@@ -6,6 +6,7 @@
 #include "db_manager.h"
 #include "dsl.h"
 #include "join.h"
+#include "queue.h"
 #include "scheduler.h"
 #include "utils.h"
 
@@ -412,53 +413,75 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
     int_result_put(client_context, val_out_var, result, positions_count);
 }
 
+static inline void index_insert(ColumnIndex *index, int value, unsigned int position, int *values) {
+    if (index->clustered) {
+        unsigned int clustered_position;
+
+        switch (index->type) {
+        case BTREE:
+            btree_insert(&index->fields.btree, value, &clustered_position);
+            break;
+        case SORTED:
+            sorted_insert(&index->fields.sorted, value, &clustered_position);
+            break;
+        }
+
+        pos_vector_insert(index->clustered_positions, clustered_position, position);
+
+        for (unsigned int j = 0; j < index->num_columns; j++) {
+            int_vector_insert(index->clustered_columns + j, clustered_position, values[j]);
+        }
+    } else {
+        switch (index->type) {
+        case BTREE:
+            btree_insert(&index->fields.btree, value, &position);
+            break;
+        case SORTED:
+            sorted_insert(&index->fields.sorted, value, &position);
+            break;
+        }
+    }
+}
+
 static void dsl_insert(Table *table, int *values) {
+    bool replace;
+    unsigned int insert_position = 0;
+
+    if (table->delete_queue.size > 0) {
+        replace = true;
+        insert_position = queue_pop(&table->delete_queue);
+    } else {
+        replace = false;
+    }
+
     for (unsigned int i = 0; i < table->columns_capacity; i++) {
         Column *column = table->columns + i;
 
         int value = values[i];
 
-        int_vector_append(&column->values, value);
+        if (replace) {
+            column->values.data[insert_position] = value;
+        } else {
+            insert_position = column->values.size;
+            int_vector_append(&column->values, value);
+        }
 
         ColumnIndex *index = column->index;
         if (index != NULL) {
-            if (index->clustered) {
-                unsigned int position;
-
-                switch (index->type) {
-                case BTREE:
-                    btree_insert(&index->fields.btree, value, &position);
-                    break;
-                case SORTED:
-                    sorted_insert(&index->fields.sorted, value, &position);
-                    break;
-                }
-
-                pos_vector_insert(index->clustered_positions, position, column->values.size - 1);
-
-                for (unsigned int j = 0; j < table->columns_capacity; j++) {
-                    int_vector_insert(index->clustered_columns + j, position, values[j]);
-                }
-            } else {
-                unsigned int position = column->values.size - 1;
-
-                switch (index->type) {
-                case BTREE:
-                    btree_insert(&index->fields.btree, value, &position);
-                    break;
-                case SORTED:
-                    sorted_insert(&index->fields.sorted, value, &position);
-                    break;
-                }
-            }
+            index_insert(index, value, insert_position, values);
         }
     }
 
     table->rows_count++;
 
-    BoolVector *deleted_rows = table->deleted_rows;
-    if (deleted_rows != NULL) {
-        bool_vector_append(deleted_rows, false);
+    if (replace) {
+        if (table->delete_queue.size == 0) {
+            bool_vector_destroy(table->deleted_rows);
+            free(table->deleted_rows);
+            table->deleted_rows = NULL;
+        } else {
+            table->deleted_rows->data[insert_position] = false;
+        }
     }
 }
 
@@ -487,6 +510,41 @@ void dsl_relational_insert(char *table_fqn, IntVector *values, Message *send_mes
     pthread_rwlock_unlock(&table->rwlock);
 }
 
+static inline void index_remove(ColumnIndex *index, int value, unsigned int position) {
+    if (index->clustered) {
+        bool removed = false;
+        unsigned int clustered_position;
+
+        switch (index->type) {
+        case BTREE:
+            removed = btree_remove(&index->fields.btree, value, position,
+                    index->clustered_positions->data, &clustered_position);
+            break;
+        case SORTED:
+            removed = sorted_remove(&index->fields.sorted, value, position,
+                    index->clustered_positions->data, &clustered_position);
+            break;
+        }
+
+        if (removed) {
+            pos_vector_remove(index->clustered_positions, clustered_position);
+
+            for (unsigned int i = 0; i < index->num_columns; i++) {
+                int_vector_remove(index->clustered_columns + i, clustered_position);
+            }
+        }
+    } else {
+        switch (index->type) {
+        case BTREE:
+            btree_remove(&index->fields.btree, value, position, NULL, NULL);
+            break;
+        case SORTED:
+            sorted_remove(&index->fields.sorted, value, position, NULL, NULL);
+            break;
+        }
+    }
+}
+
 static bool dsl_delete(Table *table, unsigned int position) {
     BoolVector *deleted_rows = table->deleted_rows;
 
@@ -501,42 +559,13 @@ static bool dsl_delete(Table *table, unsigned int position) {
         if (index != NULL) {
             int value = column->values.data[position];
 
-            if (index->clustered) {
-                bool removed = false;
-                unsigned int clustered_position;
-
-                switch (index->type) {
-                case BTREE:
-                    removed = btree_remove(&index->fields.btree, value, position,
-                            index->clustered_positions->data, &clustered_position);
-                    break;
-                case SORTED:
-                    removed = sorted_remove(&index->fields.sorted, value, position,
-                            index->clustered_positions->data, &clustered_position);
-                    break;
-                }
-
-                if (removed) {
-                    pos_vector_remove(index->clustered_positions, clustered_position);
-
-                    for (unsigned int i = 0; i < table->columns_capacity; i++) {
-                        int_vector_remove(index->clustered_columns + i, clustered_position);
-                    }
-                }
-            } else {
-                switch (index->type) {
-                case BTREE:
-                    btree_remove(&index->fields.btree, value, position, NULL, NULL);
-                    break;
-                case SORTED:
-                    sorted_remove(&index->fields.sorted, value, position, NULL, NULL);
-                    break;
-                }
-            }
+            index_remove(index, value, position);
         }
     }
 
     table->rows_count--;
+
+    queue_push(&table->delete_queue, position);
 
     if (deleted_rows == NULL) {
         table->deleted_rows = deleted_rows = malloc(sizeof(BoolVector));
@@ -618,19 +647,62 @@ void dsl_relational_delete(ClientContext *client_context, char *table_fqn, char 
     pthread_rwlock_unlock(&table->rwlock);
 }
 
-static inline void dsl_update(Table *table, unsigned int position, unsigned int column, int value) {
-    if (dsl_delete(table, position)) {
-        int updated_values[table->columns_capacity];
+static inline void dsl_update(Table *table, Column *column, unsigned int position, int value) {
+    int old_value = column->values.data[position];
 
-        for (unsigned int i = 0; i < table->columns_capacity; i++) {
-            if (i != column) {
-                updated_values[i] = table->columns[i].values.data[position];
+    if (old_value == value) {
+        return;
+    }
+
+    column->values.data[position] = value;
+
+    // Update ColumnIndex (if any) for updated Column.
+    ColumnIndex *index = column->index;
+    if (index != NULL) {
+        index_remove(index, old_value, position);
+
+        if (index->clustered) {
+            int row_values[table->columns_capacity];
+            for (unsigned int i = 0; i < table->columns_capacity; i++) {
+                row_values[i] = table->columns[i].values.data[position];
             }
+
+            index_insert(index, value, position, row_values);
+        } else {
+            index_insert(index, value, position, NULL);
+        }
+    }
+
+    // Update other clustered indices to reflect the updated value.
+    for (unsigned int i = 0; i < table->columns_capacity; i++) {
+        if (i == column->order) {
+            continue;
         }
 
-        updated_values[column] = value;
+        Column *column = table->columns + i;
 
-        dsl_insert(table, updated_values);
+        ColumnIndex *index = column->index;
+        if (index != NULL && index->clustered) {
+            int column_value = column->values.data[position];
+
+            bool found = false;
+            unsigned int clustered_position;
+
+            switch (index->type) {
+            case BTREE:
+                found = btree_search(&index->fields.btree, column_value, position,
+                        index->clustered_positions->data, &clustered_position);
+                break;
+            case SORTED:
+                found = sorted_search(&index->fields.sorted, column_value, position,
+                        index->clustered_positions->data, &clustered_position);
+                break;
+            }
+
+            if (found) {
+                index->clustered_columns[column->order].data[clustered_position] = value;
+            }
+        }
     }
 }
 
@@ -683,18 +755,18 @@ void dsl_relational_update(ClientContext *client_context, char *column_fqn, char
             }
 
             for (unsigned int i = 0; i < positions_count; i++) {
-                dsl_update(table, mapped_positions[i], column->order, value);
+                dsl_update(table, column, mapped_positions[i], value);
             }
 
             free(mapped_positions);
         } else {
             for (unsigned int i = 0; i < positions_count; i++) {
-                dsl_update(table, positions[i], column->order, value);
+                dsl_update(table, column, positions[i], value);
             }
         }
     } else {
         for (unsigned int i = 0; i < positions_count; i++) {
-            dsl_update(table, positions[i], column->order, value);
+            dsl_update(table, column, positions[i], value);
         }
     }
 
@@ -1305,6 +1377,7 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
 void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
     pthread_rwlock_t *table_rwlock;
+    unsigned int rows_count;
     bool *deleted_rows;
     int *values;
     unsigned int values_count;
@@ -1317,6 +1390,7 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         Table *table = column->table;
 
         pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
+        rows_count = table->rows_count;
         deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
@@ -1332,19 +1406,22 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         }
 
         table_rwlock = NULL;
+        rows_count = variable->num_tuples;
         deleted_rows = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
     }
 
     long long int result = 0;
-    if (deleted_rows == NULL) {
-        for (unsigned int i = 0; i < values_count; i++) {
-            result += values[i];
-        }
-    } else {
-        for (unsigned int i = 0; i < values_count; i++) {
-            result += !deleted_rows[i] * values[i];
+    if (rows_count > 0) {
+        if (deleted_rows == NULL) {
+            for (unsigned int i = 0; i < values_count; i++) {
+                result += values[i];
+            }
+        } else {
+            for (unsigned int i = 0; i < values_count; i++) {
+                result += !deleted_rows[i] * values[i];
+            }
         }
     }
 
@@ -1361,6 +1438,7 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, char *val_out_var,
         Message *send_message) {
     pthread_rwlock_t *table_rwlock;
+    unsigned int rows_count;
     bool *deleted_rows;
     int *values;
     unsigned int values_count;
@@ -1373,6 +1451,7 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         Table *table = column->table;
 
         pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
+        rows_count = table->rows_count;
         deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
@@ -1388,12 +1467,13 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
         }
 
         table_rwlock = NULL;
+        rows_count = variable->num_tuples;
         deleted_rows = NULL;
         values = variable->values.int_values;
         values_count = variable->num_tuples;
     }
 
-    if (values_count == 0) {
+    if (rows_count == 0) {
         send_message->status = EMPTY_VECTOR;
         if (table_rwlock != NULL) {
             pthread_rwlock_unlock(table_rwlock);
@@ -1411,7 +1491,7 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
             sum += !deleted_rows[i] * values[i];
         }
     }
-    double result = (double) sum / (double) values_count;
+    double result = (double) sum / (double) rows_count;
 
     if (table_rwlock != NULL) {
         pthread_rwlock_unlock(table_rwlock);

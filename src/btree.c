@@ -511,12 +511,8 @@ static bool btree_node_remove(BTreeIndex *index, BTreeNode *root, int value, uns
     if (root->leaf) {
         BTreeLeafNode *leaf = &root->fields.leaf;
 
-        unsigned int idx = binary_search_left(leaf->values, leaf->size, value);
-        if (idx == leaf->size) {
-            return -1;
-        }
-
-        for (; idx < leaf->size && leaf->values[idx] == value; idx++) {
+        for (unsigned int idx = binary_search_left(leaf->values, leaf->size, value);
+                idx < leaf->size && leaf->values[idx] == value; idx++) {
             unsigned int pos = leaf->positions[idx];
             if (index->sequential) {
                 pos = positions_map[pos];
@@ -676,6 +672,45 @@ static inline int btree_leaf_node_search_right(BTreeLeafNode *leaf, int value) {
     }
 
     return idx - 1;
+}
+
+bool btree_search(BTreeIndex *index, int value, unsigned int position, unsigned int *positions_map,
+        unsigned int *position_ptr) {
+    BTreeLeafNode *leaf = btree_node_descend_left(index->root, value);
+    if (leaf == NULL) {
+        return false;
+    }
+
+    int idx = btree_leaf_node_search_left(leaf, value);
+    if (idx == -1) {
+        return false;
+    }
+
+    unsigned int i = idx;
+    for (BTreeLeafNode *node = leaf; node != NULL; node = node->next) {
+        for (; i < node->size; i++) {
+            if (node->values[i] != value) {
+                return false;
+            }
+
+            unsigned int pos = node->positions[i];
+            if (index->sequential) {
+                pos = positions_map[pos];
+            }
+
+            if (pos == position) {
+                if (position_ptr != NULL) {
+                    *position_ptr = node->positions[i];
+                }
+
+                return true;
+            }
+        }
+
+        i = 0;
+    }
+
+    return false;
 }
 
 unsigned int btree_select_lower(BTreeIndex *index, int high, unsigned int *result) {
