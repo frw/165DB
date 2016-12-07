@@ -2,12 +2,12 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "batch.h"
 #include "client_context.h"
 #include "db_manager.h"
 #include "dsl.h"
 #include "join.h"
 #include "queue.h"
-#include "scheduler.h"
 #include "utils.h"
 
 bool shutdown_initiated = false;
@@ -164,8 +164,8 @@ static inline unsigned int dsl_select_range(int *values, unsigned int values_cou
     return result_count;
 }
 
-void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, int low,
-        bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
+void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
+        Comparator *comparator, char *pos_out_var, Message *send_message) {
     Column *source;
     pthread_rwlock_t *table_rwlock;
     unsigned int rows_count;
@@ -210,38 +210,48 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
 
     unsigned int *result = NULL;
     unsigned int result_count = 0;
-    if (rows_count > 0 && (!has_low || !has_high || low < high)) {
+    if (rows_count > 0
+            && (!comparator->has_low || !comparator->has_high || comparator->low < comparator->high)) {
         result = malloc(rows_count * sizeof(unsigned int));
 
         if (index == NULL) {
-            if (!has_low) {
-                result_count = dsl_select_lower(values, values_count, deleted_rows, high, result);
-            } else if (!has_high) {
-                result_count = dsl_select_higher(values, values_count, deleted_rows, low, result);
-            } else if (low == high - 1) {
-                result_count = dsl_select_equal(values, values_count, deleted_rows, low, result);
-            } else {
-                result_count = dsl_select_range(values, values_count, deleted_rows, low, high,
+            if (!comparator->has_low) {
+                result_count = dsl_select_lower(values, values_count, deleted_rows,
+                        comparator->high, result);
+            } else if (!comparator->has_high) {
+                result_count = dsl_select_higher(values, values_count, deleted_rows,
+                        comparator->low, result);
+            } else if (comparator->low == comparator->high - 1) {
+                result_count = dsl_select_equal(values, values_count, deleted_rows, comparator->low,
                         result);
+            } else {
+                result_count = dsl_select_range(values, values_count, deleted_rows, comparator->low,
+                        comparator->high, result);
             }
         } else {
             switch (index->type) {
             case BTREE:
-                if (!has_low) {
-                    result_count = btree_select_lower(&index->fields.btree, high, result);
-                } else if (!has_high) {
-                    result_count = btree_select_higher(&index->fields.btree, low, result);
+                if (!comparator->has_low) {
+                    result_count = btree_select_lower(&index->fields.btree, comparator->high,
+                            result);
+                } else if (!comparator->has_high) {
+                    result_count = btree_select_higher(&index->fields.btree, comparator->low,
+                            result);
                 } else {
-                    result_count = btree_select_range(&index->fields.btree, low, high, result);
+                    result_count = btree_select_range(&index->fields.btree, comparator->low,
+                            comparator->high, result);
                 }
                 break;
             case SORTED:
-                if (!has_low) {
-                    result_count = sorted_select_lower(&index->fields.sorted, high, result);
-                } else if (!has_high) {
-                    result_count = sorted_select_higher(&index->fields.sorted, low, result);
+                if (!comparator->has_low) {
+                    result_count = sorted_select_lower(&index->fields.sorted, comparator->high,
+                            result);
+                } else if (!comparator->has_high) {
+                    result_count = sorted_select_higher(&index->fields.sorted, comparator->low,
+                            result);
                 } else {
-                    result_count = sorted_select_range(&index->fields.sorted, low, high, result);
+                    result_count = sorted_select_range(&index->fields.sorted, comparator->low,
+                            comparator->high, result);
                 }
                 break;
             }
@@ -303,8 +313,8 @@ static inline unsigned int dsl_select_pos_range(unsigned int *positions, int *va
     return result_count;
 }
 
-void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var, int low,
-        bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message) {
+void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var,
+        Comparator *comparator, char *pos_out_var, Message *send_message) {
     Result *pos = result_lookup(client_context, pos_var);
     if (pos == NULL) {
         send_message->status = VARIABLE_NOT_FOUND;
@@ -338,17 +348,22 @@ void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var,
 
     unsigned int *result = NULL;
     unsigned int result_count = 0;
-    if (values_count > 0 && (!has_low || !has_high || low < high)) {
+    if (values_count > 0
+            && (!comparator->has_low || !comparator->has_high || comparator->low < comparator->high)) {
         result = malloc(values_count * sizeof(unsigned int));
 
-        if (!has_low) {
-            result_count = dsl_select_pos_lower(positions, values, values_count, high, result);
-        } else if (!has_high) {
-            result_count = dsl_select_pos_higher(positions, values, values_count, low, result);
-        } else if (low == high - 1) {
-            result_count = dsl_select_pos_equal(positions, values, values_count, low, result);
+        if (!comparator->has_low) {
+            result_count = dsl_select_pos_lower(positions, values, values_count, comparator->high,
+                    result);
+        } else if (!comparator->has_high) {
+            result_count = dsl_select_pos_higher(positions, values, values_count, comparator->low,
+                    result);
+        } else if (comparator->low == comparator->high - 1) {
+            result_count = dsl_select_pos_equal(positions, values, values_count, comparator->low,
+                    result);
         } else {
-            result_count = dsl_select_pos_range(positions, values, values_count, low, high, result);
+            result_count = dsl_select_pos_range(positions, values, values_count, comparator->low,
+                    comparator->high, result);
         }
 
         if (result_count == 0) {
@@ -1697,7 +1712,7 @@ void dsl_batch_execute(ClientContext *client_context, Message *send_message) {
 
     client_context->is_batching = false;
 
-    scheduler_execute_concurrently(client_context, send_message);
+    batch_execute_concurrently(client_context, send_message);
 }
 
 void dsl_shutdown() {

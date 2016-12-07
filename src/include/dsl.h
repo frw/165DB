@@ -12,6 +12,13 @@ typedef enum JoinType {
     HASH, NESTED_LOOP, SORT_MERGE
 } JoinType;
 
+typedef struct Comparator {
+    int low;
+    bool has_low;
+    int high;
+    bool has_high;
+} Comparator;
+
 typedef struct GeneralizedColumnHandle {
     char *name;
     bool is_column_fqn;
@@ -25,10 +32,10 @@ void dsl_create_index(char *column_fqn, ColumnIndexType type, bool clustered,
 
 void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message);
 
-void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, int low,
-bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message);
-void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var, int low,
-bool has_low, int high, bool has_high, char *pos_out_var, Message *send_message);
+void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
+        Comparator *comparator, char *pos_out_var, Message *send_message);
+void dsl_select_pos(ClientContext *client_context, char *pos_var, char *val_var,
+        Comparator *comparator, char *pos_out_var, Message *send_message);
 
 void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, char *val_out_var,
         Message *send_message);

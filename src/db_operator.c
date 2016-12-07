@@ -29,15 +29,16 @@ void db_operator_log(DbOperator *query) {
         break;
     case SELECT:
         log_info("SELECT: %s(%d), %d(%d), %d(%d) -> %s\n", query->fields.select.col_hdl.name,
-                query->fields.select.col_hdl.is_column_fqn, query->fields.select.low,
-                query->fields.select.has_low, query->fields.select.high,
-                query->fields.select.has_high, query->fields.select.pos_out_var);
+                query->fields.select.col_hdl.is_column_fqn, query->fields.select.comparator.low,
+                query->fields.select.comparator.has_low, query->fields.select.comparator.high,
+                query->fields.select.comparator.has_high, query->fields.select.pos_out_var);
         break;
     case SELECT_POS:
         log_info("SELECT_POS: %s, %s %d(%d), %d(%d) -> %s\n", query->fields.select_pos.pos_var,
-                query->fields.select_pos.val_var, query->fields.select_pos.low,
-                query->fields.select_pos.has_low, query->fields.select_pos.high,
-                query->fields.select_pos.has_high, query->fields.select_pos.pos_out_var);
+                query->fields.select_pos.val_var, query->fields.select_pos.comparator.low,
+                query->fields.select_pos.comparator.has_low,
+                query->fields.select_pos.comparator.high,
+                query->fields.select_pos.comparator.has_high, query->fields.select_pos.pos_out_var);
         break;
     case FETCH:
         log_info("FETCH: %s, %s -> %s\n", query->fields.fetch.column_fqn,
@@ -142,15 +143,13 @@ void db_operator_execute(DbOperator *query, Message *message) {
         dsl_load(query->fields.load.col_fqns, query->fields.load.col_vals, message);
         break;
     case SELECT:
-        dsl_select(query->context, &query->fields.select.col_hdl, query->fields.select.low,
-                query->fields.select.has_low, query->fields.select.high,
-                query->fields.select.has_high, query->fields.select.pos_out_var, message);
+        dsl_select(query->context, &query->fields.select.col_hdl, &query->fields.select.comparator,
+                query->fields.select.pos_out_var, message);
         break;
     case SELECT_POS:
         dsl_select_pos(query->context, query->fields.select_pos.pos_var,
-                query->fields.select_pos.val_var, query->fields.select_pos.low,
-                query->fields.select_pos.has_low, query->fields.select_pos.high,
-                query->fields.select_pos.has_high, query->fields.select_pos.pos_out_var, message);
+                query->fields.select_pos.val_var, &query->fields.select.comparator,
+                query->fields.select_pos.pos_out_var, message);
         break;
     case FETCH:
         dsl_fetch(query->context, query->fields.fetch.column_fqn, query->fields.fetch.pos_var,

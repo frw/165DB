@@ -51,10 +51,7 @@ typedef struct LoadOperator {
  */
 typedef struct SelectOperator {
     GeneralizedColumnHandle col_hdl;
-    int low;
-    bool has_low;
-    int high;
-    bool has_high;
+    Comparator comparator;
     char *pos_out_var;
 } SelectOperator;
 
@@ -64,10 +61,7 @@ typedef struct SelectOperator {
 typedef struct SelectPosOperator {
     char *pos_var;
     char *val_var;
-    int low;
-    bool has_low;
-    int high;
-    bool has_high;
+    Comparator comparator;
     char *pos_out_var;
 } SelectPosOperator;
 

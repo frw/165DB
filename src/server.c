@@ -27,13 +27,13 @@
 #include <sys/types.h>
 #include <sys/un.h>
 
+#include "batch.h"
 #include "common.h"
 #include "client_context.h"
 #include "db_manager.h"
 #include "db_operator.h"
 #include "message.h"
 #include "parser.h"
-#include "scheduler.h"
 #include "utils.h"
 #include "vector.h"
 
@@ -304,7 +304,7 @@ static inline void handle_operator(DbOperator *dbo, Message *message) {
             && dbo->type != BATCH_QUERIES
             && dbo->type != BATCH_EXECUTE
             && dbo->type != SHUTDOWN) {
-        scheduler_handle_operator(dbo, message);
+        batch_query(dbo, message);
     } else {
         db_operator_execute(dbo, message);
         db_operator_free(dbo);

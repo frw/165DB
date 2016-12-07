@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -269,7 +270,6 @@ DbOperator *parse_load(char *handle, char *load_arguments, Message *message) {
 
 static inline void parse_optional_number(char *token, int *value, bool *has_value, MessageStatus *status) {
     if (strcmp(token, "null") == 0) {
-        *value = 0;
         *has_value = false;
     } else {
         char *endptr;
@@ -327,14 +327,14 @@ DbOperator *parse_select(char *pos_out_var, char *select_arguments, Message *mes
             return NULL;
         }
 
-        int low_val = 0;
+        int low_val = INT_MIN;
         bool has_low = false;
         parse_optional_number(low, &low_val, &has_low, status);
         if (message->status == INCORRECT_FORMAT) {
             return NULL;
         }
 
-        int high_val = 0;
+        int high_val = INT_MAX;
         bool has_high = false;
         parse_optional_number(high, &high_val, &has_high, status);
         if (message->status == INCORRECT_FORMAT) {
@@ -350,10 +350,10 @@ DbOperator *parse_select(char *pos_out_var, char *select_arguments, Message *mes
         dbo->type = SELECT;
         dbo->fields.select.col_hdl.name = strdup(col_hdl);
         dbo->fields.select.col_hdl.is_column_fqn = is_column_fqn;
-        dbo->fields.select.low = low_val;
-        dbo->fields.select.has_low = has_low;
-        dbo->fields.select.high = high_val;
-        dbo->fields.select.has_high = has_high;
+        dbo->fields.select.comparator.low = low_val;
+        dbo->fields.select.comparator.has_low = has_low;
+        dbo->fields.select.comparator.high = high_val;
+        dbo->fields.select.comparator.has_high = has_high;
         dbo->fields.select.pos_out_var = strdup(pos_out_var);
         return dbo;
     } else {
@@ -367,14 +367,14 @@ DbOperator *parse_select(char *pos_out_var, char *select_arguments, Message *mes
             return NULL;
         }
 
-        int low_val = 0;
+        int low_val = INT_MIN;
         bool has_low = false;
         parse_optional_number(low, &low_val, &has_low, status);
         if (message->status == INCORRECT_FORMAT) {
             return NULL;
         }
 
-        int high_val = 0;
+        int high_val = INT_MAX;
         bool has_high = false;
         parse_optional_number(high, &high_val, &has_high, status);
         if (message->status == INCORRECT_FORMAT) {
@@ -390,10 +390,10 @@ DbOperator *parse_select(char *pos_out_var, char *select_arguments, Message *mes
         dbo->type = SELECT_POS;
         dbo->fields.select_pos.pos_var = strdup(pos_var);
         dbo->fields.select_pos.val_var = strdup(val_var);
-        dbo->fields.select_pos.low = low_val;
-        dbo->fields.select_pos.has_low = has_low;
-        dbo->fields.select_pos.high = high_val;
-        dbo->fields.select_pos.has_high = has_high;
+        dbo->fields.select_pos.comparator.low = low_val;
+        dbo->fields.select_pos.comparator.has_low = has_low;
+        dbo->fields.select_pos.comparator.high = high_val;
+        dbo->fields.select_pos.comparator.has_high = has_high;
         dbo->fields.select_pos.pos_out_var = strdup(pos_out_var);
         return dbo;
     }
