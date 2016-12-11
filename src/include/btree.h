@@ -4,8 +4,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#define BTREE_INTERNAL_NODE_CAPACITY 128
-#define BTREE_LEAF_NODE_CAPACITY 128
+#define BTREE_INTERNAL_NODE_CAPACITY 512
+#define BTREE_LEAF_NODE_CAPACITY 512
 
 typedef struct BTreeNode BTreeNode;
 typedef union BTreeNodeFields BTreeNodeFields;
