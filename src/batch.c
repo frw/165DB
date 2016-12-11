@@ -265,7 +265,6 @@ typedef struct BatchQuery {
     } operators;
     unsigned int batch_size;
     bool success;
-    pthread_t thread;
 } BatchQuery;
 
 void *query_routine(void *data) {
@@ -570,6 +569,21 @@ static inline void register_output(DbOperator *dbo, HashTable *output_table) {
     }
 }
 
+static inline void batch_query_init(BatchQuery *query, DbOperator *dbo) {
+    query->operators.dbo = dbo;
+    query->batch_size = 1;
+}
+
+static inline void batch_query_attach(BatchQuery *query, DbOperator *dbo, unsigned int max_capacity) {
+    if (query->batch_size == 1) {
+        DbOperator *first = query->operators.dbo;
+        query->operators.dbos = malloc(max_capacity * sizeof(DbOperator *));
+        query->operators.dbos[0] = first;
+    }
+
+    query->operators.dbos[query->batch_size++] = dbo;
+}
+
 static inline bool execute_operators(HashTable *output_table) {
     if (output_table->num_nodes == 0) {
         return true;
@@ -597,7 +611,7 @@ static inline bool execute_operators(HashTable *output_table) {
 
     BatchQuery queries[output_table->num_nodes];
 
-    unsigned int i = 0;
+    unsigned int queries_count = 0;
     for (HashTableNode *node = output_table->nodes; node != NULL; node = node->nodes_next) {
         DbOperator *dbo = node->value;
 
@@ -609,26 +623,14 @@ static inline bool execute_operators(HashTable *output_table) {
             query = hash_table_get(&select_table, dbo->fields.select.col_hdl.name);
 
             if (query != NULL) {
-                if (query->batch_size == 1) {
-                    DbOperator *dbo = query->operators.dbo;
-                    query->operators.dbos = malloc(BATCH_MAX_SELECT * sizeof(DbOperator *));
-                    query->operators.dbos[0] = dbo;
-                }
-
-                query->operators.dbos[query->batch_size++] = dbo;
+                batch_query_attach(query, dbo, BATCH_MAX_SELECT);
 
                 if (query->batch_size == BATCH_MAX_SELECT) {
-                    if (pthread_create(&query->thread, NULL, &query_routine, query) != 0) {
-                        log_err("Unable to create query worker thread.");
-                        exit(1);
-                    }
-
                     hash_table_put(&select_table, dbo->fields.select.col_hdl.name, NULL);
                 }
             } else {
-                query = queries + i++;
-                query->operators.dbo = dbo;
-                query->batch_size = 1;
+                query = queries + queries_count++;
+                batch_query_init(query, dbo);
 
                 hash_table_put(&select_table, dbo->fields.select.col_hdl.name, query);
             }
@@ -640,26 +642,14 @@ static inline bool execute_operators(HashTable *output_table) {
             query = hash_table_get(&select_pos_table, dbo->fields.select_pos.val_var);
 
             if (query != NULL) {
-                if (query->batch_size == 1) {
-                    DbOperator *dbo = query->operators.dbo;
-                    query->operators.dbos = malloc(BATCH_MAX_SELECT_POS * sizeof(DbOperator *));
-                    query->operators.dbos[0] = dbo;
-                }
-
-                query->operators.dbos[query->batch_size++] = dbo;
+                batch_query_attach(query, dbo, BATCH_MAX_SELECT_POS);
 
                 if (query->batch_size == BATCH_MAX_SELECT_POS) {
-                    if (pthread_create(&query->thread, NULL, &query_routine, query) != 0) {
-                        log_err("Unable to create query worker thread.");
-                        exit(1);
-                    }
-
                     hash_table_put(&select_pos_table, dbo->fields.select_pos.val_var, NULL);
                 }
             } else {
-                query = queries + i++;
-                query->operators.dbo = dbo;
-                query->batch_size = 1;
+                query = queries + queries_count++;
+                batch_query_init(query, dbo);
 
                 hash_table_put(&select_pos_table, dbo->fields.select_pos.val_var, query);
             }
@@ -667,47 +657,36 @@ static inline bool execute_operators(HashTable *output_table) {
 #endif
 
         default:
-            query = queries + i++;
-            query->operators.dbo = dbo;
-            query->batch_size = 1;
-
-            if (pthread_create(&query->thread, NULL, &query_routine, query) != 0) {
-                log_err("Unable to create query worker thread.");
-                exit(1);
-            }
+            query = queries + queries_count++;
+            batch_query_init(query, dbo);
             break;
         }
 
     }
 
 #if BATCH_MAX_SELECT > 1
-    for (HashTableNode *n = select_table.nodes; n != NULL; n = n->nodes_next) {
-        BatchQuery *query = n->value;
-        if (query != NULL && pthread_create(&query->thread, NULL, &query_routine, query) != 0) {
-            log_err("Unable to create query worker thread.");
-            exit(1);
-        }
-    }
     hash_table_destroy(&select_table, NULL);
 #endif
 
 #if BATCH_MAX_SELECT_POS > 1
-    for (HashTableNode *n = select_pos_table.nodes; n != NULL; n = n->nodes_next) {
-        BatchQuery *query = n->value;
-        if (query != NULL && pthread_create(&query->thread, NULL, &query_routine, query) != 0) {
+    hash_table_destroy(&select_pos_table, NULL);
+#endif
+
+    pthread_t threads[queries_count];
+
+    for (unsigned int i = 0; i < queries_count; i++) {
+        if (pthread_create(threads + i, NULL, &query_routine, queries + i) != 0) {
             log_err("Unable to create query worker thread.");
             exit(1);
         }
     }
-    hash_table_destroy(&select_pos_table, NULL);
-#endif
 
     bool success = true;
 
-    for (unsigned int j = 0; j < i; j++) {
-        pthread_join(queries[j].thread, NULL);
+    for (unsigned int i = 0; i < queries_count; i++) {
+        pthread_join(threads[i], NULL);
 
-        if (!queries[j].success) {
+        if (!queries[i].success) {
             success = false;
         }
     }
