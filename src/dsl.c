@@ -184,7 +184,7 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
         source = column;
         pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
         rows_count = table->rows_count;
-        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
+        deleted_rows = table->delete_queue.size > 0 ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -489,14 +489,11 @@ static void dsl_insert(Table *table, int *values) {
 
     table->rows_count++;
 
+    BoolVector *deleted_rows = table->deleted_rows;
     if (replace) {
-        if (table->delete_queue.size == 0) {
-            bool_vector_destroy(table->deleted_rows);
-            free(table->deleted_rows);
-            table->deleted_rows = NULL;
-        } else {
-            table->deleted_rows->data[insert_position] = false;
-        }
+        deleted_rows->data[insert_position] = false;
+    } else if (deleted_rows != NULL) {
+        bool_vector_append(deleted_rows, false);
     }
 }
 
@@ -925,7 +922,7 @@ void dsl_min(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 
         pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
         rows_count = table->rows_count;
-        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
+        deleted_rows = table->delete_queue.size > 0 ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -1044,7 +1041,7 @@ void dsl_min_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         source = column;
         pthread_rwlock_rdlock(table_rwlock = &column->table->rwlock);
         rows_count = table->rows_count;
-        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
+        deleted_rows = table->delete_queue.size > 0 ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -1166,7 +1163,7 @@ void dsl_max(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 
         pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
         rows_count = table->rows_count;
-        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
+        deleted_rows = table->delete_queue.size > 0 ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -1285,7 +1282,7 @@ void dsl_max_pos(ClientContext *client_context, char *pos_var, GeneralizedColumn
         source = column;
         pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
         rows_count = table->rows_count;
-        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
+        deleted_rows = table->delete_queue.size > 0 ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
         index = column->index;
@@ -1406,7 +1403,7 @@ void dsl_sum(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 
         pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
         rows_count = table->rows_count;
-        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
+        deleted_rows = table->delete_queue.size > 0 ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
     } else {
@@ -1467,7 +1464,7 @@ void dsl_avg(ClientContext *client_context, GeneralizedColumnHandle *col_hdl, ch
 
         pthread_rwlock_rdlock(table_rwlock = &table->rwlock);
         rows_count = table->rows_count;
-        deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
+        deleted_rows = table->delete_queue.size > 0 ? table->deleted_rows->data : NULL;
         values = column->values.data;
         values_count = column->values.size;
     } else {
