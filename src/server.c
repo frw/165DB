@@ -228,7 +228,7 @@ read_loop:
 
             col_vals = malloc(num_columns * sizeof(IntVector));
             for (unsigned int i = 0; i < num_columns; i++) {
-                int_vector_init(&col_vals[i], initial_capacity);
+                int_vector_init(col_vals + i, initial_capacity);
             }
 
             header = false;
@@ -276,16 +276,28 @@ read_loop:
                     }
                     goto read_loop;
                 } else if (c == ',') {
-                    int_vector_append(&col_vals[i], acc);
+                    IntVector *v = col_vals + i;
+                    if (v->size == v->capacity) {
+                        v->data = realloc(v->data, (v->capacity *= 2) * sizeof(int));
+                    }
+                    v->data[v->size++] = acc;
+
                     i++;
                     line++;
+
                     continue;
                 } else if (c == '\n' || c == '\0') {
-                    int_vector_append(&col_vals[i], acc);
+                    IntVector *v = col_vals + i;
+                    if (v->size == v->capacity) {
+                        v->data = realloc(v->data, (v->capacity *= 2) * sizeof(int));
+                    }
+                    v->data[v->size++] = acc;
+
                     if (i + 1 < num_columns) {
                         *status = INCORRECT_FILE_FORMAT;
                         error = true;
                     }
+
                     goto read_loop;
                 } else {
                     *status = INCORRECT_FILE_FORMAT;
@@ -299,7 +311,7 @@ read_loop:
     if (error) {
         if (col_vals != NULL) {
             for (unsigned int i = 0; i < col_fqns->size; i++) {
-                int_vector_destroy(&col_vals[i]);
+                int_vector_destroy(col_vals + i);
             }
             free(col_vals);
         }
