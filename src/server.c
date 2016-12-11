@@ -134,6 +134,8 @@ bool load_file(DbOperator *dbo, MessageStatus *status) {
         return false;
     }
 
+    char read_buffer[READ_BUFFER_SIZE];
+
     Vector *col_fqns = malloc(sizeof(Vector));
     vector_init(col_fqns, DEFAULT_NUM_COLUMNS);
 
@@ -145,24 +147,25 @@ bool load_file(DbOperator *dbo, MessageStatus *status) {
 
     char *table_name = NULL;
 
-    bool error = false;
+    register bool error = false;
 
-    bool header = true;
-    char read_buffer[READ_BUFFER_SIZE];
-    char *output_str = NULL;
+    register bool header = true;
+    register char *line;
 
-    unsigned int num_columns = 0;
+    register unsigned int num_columns = 0;
 
 read_loop:
-    while(output_str = fgets(read_buffer, READ_BUFFER_SIZE, file), !feof(file)) {
-        if (output_str == NULL) {
+    for (;;) {
+        line = fgets(read_buffer, READ_BUFFER_SIZE, file);
+
+        if (line == NULL) {
             *status = COMMUNICATION_ERROR;
             log_info("Communication error\n");
             error = true;
             break;
         }
 
-        if (*output_str == '\0') {
+        if (*line == '\0') {
             // We've finished reading until the end of the file.
             break;
         }
@@ -172,19 +175,18 @@ read_loop:
             continue;
         }
 
-        output_str = strip_whitespace(output_str);
-
-        if (*output_str == '\0') {
-            // Ignore empty lines.
-            continue;
-        }
-
-        char **output_str_index = &output_str;
-
         if (header) {
-            char *token;
+            char *line_stripped = strip_whitespace(line);
 
-            while ((token = strsep(output_str_index, ",")) != NULL) {
+            if (*line_stripped == '\0') {
+                // Ignore empty lines.
+                continue;
+            }
+
+            char **line_stripped_index = &line_stripped;
+
+            char *token;
+            while ((token = strsep(line_stripped_index, ",")) != NULL) {
                 if (!is_valid_fqn(token, 2) || hash_table_get(&name_set, token) != NULL) {
                     *status = INCORRECT_FILE_FORMAT;
                     error = true;
@@ -231,33 +233,65 @@ read_loop:
 
             header = false;
         } else {
-            char *token;
-            unsigned int i = 0;
+            register unsigned int i = 0;
 
-            while ((token = strsep(output_str_index, ",")) != NULL) {
+            for (;;) {
                 if (i >= num_columns) {
                     *status = INCORRECT_FILE_FORMAT;
                     error = true;
                     goto read_loop;
                 }
 
-                char *endptr;
-                int value = strtoi(token, &endptr);
-                if (endptr == token || *endptr != '\0') {
+                register char c = *line;
+
+                register bool parsed = false;
+
+                register int acc = 0;
+                register bool neg = false;
+
+                // Skip any whitespace at the start.
+                while (c == ' ') {
+                    c = *++line;
+                };
+
+                // Check if prefixed with negative sign.
+                if (c == '-') {
+                    neg = true;
+                    c = *++line;
+                }
+
+                for (; c >= '0' && c <= '9'; c = *++line) {
+                    acc = (acc * 10) + (c - '0');
+                    parsed = true;
+                }
+
+                if (neg) {
+                    acc = -acc;
+                }
+
+                if (!parsed) {
+                    if (i > 0 || (c != '\n' && c != '\0')) {
+                        *status = INCORRECT_FILE_FORMAT;
+                        error = true;
+                    }
+                    goto read_loop;
+                } else if (c == ',') {
+                    int_vector_append(&col_vals[i], acc);
+                    i++;
+                    line++;
+                    continue;
+                } else if (c == '\n' || c == '\0') {
+                    int_vector_append(&col_vals[i], acc);
+                    if (i + 1 < num_columns) {
+                        *status = INCORRECT_FILE_FORMAT;
+                        error = true;
+                    }
+                    goto read_loop;
+                } else {
                     *status = INCORRECT_FILE_FORMAT;
                     error = true;
                     goto read_loop;
                 }
-
-                int_vector_append(&col_vals[i], value);
-
-                i++;
-            }
-
-            if (i < num_columns) {
-                *status = INCORRECT_FILE_FORMAT;
-                error = true;
-                goto read_loop;
             }
         }
     }
@@ -335,7 +369,8 @@ static inline void handle_client(int client_socket) {
     // 3. Send status of the received message (OK, UNKNOWN_QUERY, etc)
     // 4. Send response of request.
     do {
-        length = recv(client_socket, &recv_message.length, sizeof(recv_message.length), MSG_WAITALL);
+        length = recv(client_socket, &recv_message.length, sizeof(recv_message.length),
+                MSG_WAITALL);
         if (length < 0) {
             log_err("Client connection closed!\n");
             break;
@@ -397,7 +432,7 @@ static inline void handle_client(int client_socket) {
 
             free(send_message.payload);
         }
-    } while(!is_shutdown_initiated());
+    } while (!is_shutdown_initiated());
 
     client_context_destroy(&client_context);
 
@@ -485,7 +520,7 @@ int main(void) {
 
         pthread_mutex_unlock(&clients_mutex);
 
-    } while(!is_shutdown_initiated());
+    } while (!is_shutdown_initiated());
 
     pthread_mutex_lock(&clients_mutex);
 
