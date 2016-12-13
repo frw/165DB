@@ -234,11 +234,11 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
 
             bool *deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
             if (deleted_rows == NULL) {
-                radix_sort_indices(column->values.data, NULL, leading_values, sorted_positions, rows_count);
+                radix_sort(column->values.data, NULL, leading_values, sorted_positions, rows_count);
             } else {
                 filter_removed(leading_values, sorted_positions, column->values.data, deleted_rows, column->values.size, rows_count);
 
-                radix_sort_indices(leading_values, sorted_positions, leading_values, sorted_positions, rows_count);
+                radix_sort(leading_values, sorted_positions, leading_values, sorted_positions, rows_count);
             }
 
 
@@ -290,14 +290,14 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
 
             bool *deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
             if (deleted_rows == NULL) {
-                radix_sort_indices(column->values.data, NULL, values, positions, rows_count);
+                radix_sort(column->values.data, NULL, values, positions, rows_count);
             } else {
                 filter_removed(values, positions, column->values.data, deleted_rows, column->values.size, rows_count);
 
-                radix_sort_indices(values, positions, values, positions, rows_count);
+                radix_sort(values, positions, values, positions, rows_count);
             }
 
-            radix_sort_indices(column->values.data, NULL, values, positions, rows_count);
+            radix_sort(column->values.data, NULL, values, positions, rows_count);
 
             switch (type) {
             case BTREE:
