@@ -42,9 +42,11 @@
 #define NAME_SET_INITIAL_CAPACITY 64
 #define NAME_SET_LOAD_FACTOR 0.75f
 
-#define DEFAULT_NUM_COLUMNS 4
-#define MINIMUM_NUM_TUPLES 1024
-#define APPROXIMATE_CHARS_PER_VALUE 10
+#define DEFAULT_COLUMNS_COUNT 4
+#define DEFAULT_ROWS_COUNT_SMALL 1000
+#define DEFAULT_ROWS_COUNT_LARGE 100000000
+
+#define LARGE_FILE_THRESHOLD 2147483648L
 
 typedef struct ClientNode {
     int client_socket;
@@ -136,10 +138,11 @@ bool load_file(DbOperator *dbo, MessageStatus *status) {
 
     char read_buffer[READ_BUFFER_SIZE];
 
-    Vector *col_fqns = malloc(sizeof(Vector));
-    vector_init(col_fqns, DEFAULT_NUM_COLUMNS);
+    register char *line;
+    register bool error = false;
 
-    IntVector *col_vals = NULL;
+    Vector *col_fqns = malloc(sizeof(Vector));
+    vector_init(col_fqns, DEFAULT_COLUMNS_COUNT);
 
     char dummy = 0;
     HashTable name_set;
@@ -147,14 +150,8 @@ bool load_file(DbOperator *dbo, MessageStatus *status) {
 
     char *table_name = NULL;
 
-    register bool error = false;
 
-    register bool header = true;
-    register char *line;
-
-    register unsigned int num_columns = 0;
-
-read_loop:
+    // Parse header.
     for (;;) {
         line = fgets(read_buffer, READ_BUFFER_SIZE, file);
 
@@ -169,151 +166,188 @@ read_loop:
             // We've finished reading until the end of the file.
             break;
         }
+        char *line_stripped = strip_whitespace(line);
+
+        if (*line_stripped == '\0') {
+            // Ignore empty lines.
+            continue;
+        }
+
+        char **line_stripped_index = &line_stripped;
+
+        char *token;
+        while ((token = strsep(line_stripped_index, ",")) != NULL) {
+            if (!is_valid_fqn(token, 2) || hash_table_get(&name_set, token) != NULL) {
+                *status = INCORRECT_FILE_FORMAT;
+                error = true;
+                goto after_header_loop;
+            }
+
+            int dot_count = 0;
+            for (char *c = token; *c != '\0'; c++) {
+                if (*c == '.' && ++dot_count == 2) {
+                    unsigned int length = c - token;
+                    if (table_name == NULL) {
+                        table_name = strndup(token, length);
+                    } else if (strncmp(token, table_name, length)) {
+                        *status = INCORRECT_FILE_FORMAT;
+                        error = true;
+                        goto after_header_loop;
+                    }
+                    break;
+                }
+            }
+
+            hash_table_put(&name_set, token, &dummy);
+
+            vector_append(col_fqns, strdup(token));
+        }
+
+        break;
+    }
+
+after_header_loop:
+    // Free up unnecessary resources.
+    hash_table_destroy(&name_set, NULL);
+
+    if (table_name != NULL) {
+        free(table_name);
+    }
+
+    // Determine number of columns.
+    register unsigned int columns_count = 0;
+
+    if (!error) {
+        columns_count = col_fqns->size;
+
+        if (columns_count == 0) {
+            *status = INCORRECT_FILE_FORMAT;
+            error = true;
+        }
+    }
+
+    // Initialize buffers.
+    int *col_vals[columns_count];
+    register unsigned int col_vals_capacity = 0;
+
+    if (!error) {
+        if (file_size > LARGE_FILE_THRESHOLD) {
+            col_vals_capacity = DEFAULT_ROWS_COUNT_LARGE;
+        } else {
+            col_vals_capacity = DEFAULT_ROWS_COUNT_SMALL;
+        }
+
+        for (unsigned int i = 0; i < columns_count; i++) {
+            col_vals[i] = malloc(col_vals_capacity * sizeof(int));
+        }
+    }
+
+    register unsigned int rows_count = 0;
+
+    // Parse body.
+body_loop:
+    for (;;) {
+        line = fgets(read_buffer, READ_BUFFER_SIZE, file);
+
+        if (line == NULL) {
+            *status = COMMUNICATION_ERROR;
+            log_info("Communication error\n");
+            error = true;
+            break;
+        }
+
+        register char c = *line;
+
+        if (c == '\0') {
+            // We've finished reading the file.
+            break;
+        }
 
         if (error) {
             // Error occurred previously. Simply read until the end of the stream.
             continue;
         }
 
-        if (header) {
-            char *line_stripped = strip_whitespace(line);
+        if (c == '\n') {
+            // Skip empty lines.
+            continue;
+        }
 
-            if (*line_stripped == '\0') {
-                // Ignore empty lines.
-                continue;
+        // Check if buffers need to be expanded.
+        if (rows_count == col_vals_capacity) {
+            col_vals_capacity *= 2;
+
+            for (unsigned int i = 0; i < columns_count; i++) {
+                col_vals[i] = realloc(col_vals[i], col_vals_capacity * sizeof(int));
+            }
+        }
+
+        register unsigned int column = 0;
+
+        for (;;) {
+            register bool parsed = false;
+
+            register int acc = 0;
+            register bool neg = false;
+
+            // Skip any whitespace at the start.
+            while (c == ' ') {
+                c = *++line;
+            };
+
+            // Check if prefixed with negative sign.
+            if (c == '-') {
+                neg = true;
+                c = *++line;
             }
 
-            char **line_stripped_index = &line_stripped;
-
-            char *token;
-            while ((token = strsep(line_stripped_index, ",")) != NULL) {
-                if (!is_valid_fqn(token, 2) || hash_table_get(&name_set, token) != NULL) {
-                    *status = INCORRECT_FILE_FORMAT;
-                    error = true;
-                    goto read_loop;
-                }
-
-                int dot_count = 0;
-                for (char *c = token; *c != '\0'; c++) {
-                    if (*c == '.' && ++dot_count == 2) {
-                        unsigned int length = c - token;
-                        if (table_name == NULL) {
-                            table_name = strndup(token, length);
-                        } else if (strncmp(token, table_name, length)) {
-                            *status = INCORRECT_FILE_FORMAT;
-                            error = true;
-                            goto read_loop;
-                        }
-                        break;
-                    }
-                }
-
-                hash_table_put(&name_set, token, &dummy);
-
-                vector_append(col_fqns, strdup(token));
+            for (; c >= '0' && c <= '9'; c = *++line) {
+                acc = (acc * 10) + (c - '0');
+                parsed = true;
             }
 
-            num_columns = col_fqns->size;
-
-            if (num_columns == 0) {
+            if (!parsed) {
                 *status = INCORRECT_FILE_FORMAT;
                 error = true;
-                goto read_loop;
+                goto body_loop;
             }
 
-            unsigned int initial_capacity = file_size / num_columns / APPROXIMATE_CHARS_PER_VALUE;
-            if (initial_capacity < MINIMUM_NUM_TUPLES) {
-                initial_capacity = MINIMUM_NUM_TUPLES;
+            if (neg) {
+                acc = -acc;
             }
 
-            col_vals = malloc(num_columns * sizeof(IntVector));
-            for (unsigned int i = 0; i < num_columns; i++) {
-                int_vector_init(col_vals + i, initial_capacity);
-            }
+            if (c == ',') {
+                col_vals[column][rows_count] = acc;
 
-            header = false;
-        } else {
-            register unsigned int i = 0;
-
-            for (;;) {
-                if (i >= num_columns) {
+                if (++column >= columns_count) {
                     *status = INCORRECT_FILE_FORMAT;
                     error = true;
-                    goto read_loop;
+                    goto body_loop;
                 }
 
-                register char c = *line;
+                c = *++line;
+            } else if (c == '\n') {
+                col_vals[column][rows_count] = acc;
 
-                register bool parsed = false;
-
-                register int acc = 0;
-                register bool neg = false;
-
-                // Skip any whitespace at the start.
-                while (c == ' ') {
-                    c = *++line;
-                };
-
-                // Check if prefixed with negative sign.
-                if (c == '-') {
-                    neg = true;
-                    c = *++line;
-                }
-
-                for (; c >= '0' && c <= '9'; c = *++line) {
-                    acc = (acc * 10) + (c - '0');
-                    parsed = true;
-                }
-
-                if (neg) {
-                    acc = -acc;
-                }
-
-                if (!parsed) {
-                    if (i > 0 || (c != '\n' && c != '\0')) {
-                        *status = INCORRECT_FILE_FORMAT;
-                        error = true;
-                    }
-                    goto read_loop;
-                } else if (c == ',') {
-                    IntVector *v = col_vals + i;
-                    if (v->size == v->capacity) {
-                        v->data = realloc(v->data, (v->capacity *= 2) * sizeof(int));
-                    }
-                    v->data[v->size++] = acc;
-
-                    i++;
-                    line++;
-
-                    continue;
-                } else if (c == '\n' || c == '\0') {
-                    IntVector *v = col_vals + i;
-                    if (v->size == v->capacity) {
-                        v->data = realloc(v->data, (v->capacity *= 2) * sizeof(int));
-                    }
-                    v->data[v->size++] = acc;
-
-                    if (i + 1 < num_columns) {
-                        *status = INCORRECT_FILE_FORMAT;
-                        error = true;
-                    }
-
-                    goto read_loop;
-                } else {
+                if (column + 1 < columns_count) {
                     *status = INCORRECT_FILE_FORMAT;
                     error = true;
-                    goto read_loop;
+                    goto body_loop;
                 }
+
+                rows_count++;
+                goto body_loop;
+            } else {
+                *status = INCORRECT_FILE_FORMAT;
+                error = true;
+                goto body_loop;
             }
         }
     }
 
     if (error) {
-        if (col_vals != NULL) {
-            for (unsigned int i = 0; i < col_fqns->size; i++) {
-                int_vector_destroy(col_vals + i);
-            }
-            free(col_vals);
+        for (unsigned int i = 0; i < columns_count; i++) {
+            free(col_vals[i]);
         }
 
         vector_destroy(col_fqns, &free);
@@ -322,15 +356,16 @@ read_loop:
         log_err("Error occurred when receiving load payload.\n");
     } else {
         dbo->fields.load.col_fqns = col_fqns;
-        dbo->fields.load.col_vals = col_vals;
 
-        log_info("Received: %u columns, %u rows.\n", num_columns, col_vals[0].size);
-    }
+        dbo->fields.load.col_vals = malloc(columns_count * sizeof(IntVector));
+        for (unsigned int i = 0; i < columns_count; i++) {
+            IntVector *v = dbo->fields.load.col_vals + i;
+            v->data = col_vals[i];
+            v->size = rows_count;
+            v->capacity = col_vals_capacity;
+        }
 
-    hash_table_destroy(&name_set, NULL);
-
-    if (table_name != NULL) {
-        free(table_name);
+        log_info("Received: %u columns, %u rows.\n", columns_count, rows_count);
     }
 
     fclose(file);
