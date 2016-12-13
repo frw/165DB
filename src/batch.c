@@ -672,26 +672,32 @@ static inline bool execute_operators(HashTable *output_table) {
     hash_table_destroy(&select_pos_table, NULL);
 #endif
 
-    pthread_t threads[queries_count];
+    if (queries_count == 1) {
+        BatchQuery *query = queries;
+        query_routine(query);
+        return query->success;
+    } else {
+        pthread_t threads[queries_count];
 
-    for (unsigned int i = 0; i < queries_count; i++) {
-        if (pthread_create(threads + i, NULL, &query_routine, queries + i) != 0) {
-            log_err("Unable to create query worker thread.");
-            exit(1);
+        for (unsigned int i = 0; i < queries_count; i++) {
+            if (pthread_create(threads + i, NULL, &query_routine, queries + i) != 0) {
+                log_err("Unable to create query worker thread.");
+                exit(1);
+            }
         }
-    }
 
-    bool success = true;
+        bool success = true;
 
-    for (unsigned int i = 0; i < queries_count; i++) {
-        pthread_join(threads[i], NULL);
+        for (unsigned int i = 0; i < queries_count; i++) {
+            pthread_join(threads[i], NULL);
 
-        if (!queries[i].success) {
-            success = false;
+            if (!queries[i].success) {
+                success = false;
+            }
         }
-    }
 
-    return success;
+        return success;
+    }
 }
 
 void batch_execute_concurrently(ClientContext *client_context, Message *message) {
