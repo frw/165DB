@@ -12,14 +12,14 @@
 #define ANSI_COLOR_GREEN   "\x1b[32m"
 #define ANSI_COLOR_RESET   "\x1b[0m"
 
-static inline bool is_ascending(int *values, unsigned int count) {
+static inline bool is_records_ascending(Record *records, size_t count) {
     if (count == 0) {
         return true;
     }
 
-    int prev = values[0];
-    for (unsigned int i = 1; i < count; i++) {
-        int val = values[i];
+    int prev = records[0].value;
+    for (size_t i = 1; i < count; i++) {
+        int val = records[i].value;
 
         if (prev > val) {
             return false;
@@ -31,153 +31,134 @@ static inline bool is_ascending(int *values, unsigned int count) {
     return true;
 }
 
-static inline void _radix_sort_lsb(int *values, int *values_buf, int *values_dst,
-        unsigned int *positions, unsigned int *positions_buf, unsigned int *positions_dst,
-        unsigned int size, unsigned maxshift) {
+static inline void _radix_sort_indices_lsb(Record *dst, Record *begin, Record *end, Record *begin1,
+        unsigned int maxshift) {
+    size_t size = end - begin;
+    if (is_records_ascending(begin, size)) {
+        if (dst != begin) {
+            memcpy(dst, begin, size * sizeof(Record));
+        }
+        return;
+    }
+
+    Record *end1 = begin1 + size;
+
     for (unsigned int shift = 0; shift <= maxshift; shift += 8) {
-        if (is_ascending(values, size)) {
-            if (values_dst != values) {
-                memcpy(values_dst, values, size * sizeof(int));
-            }
-            if (positions_dst != positions) {
-                memcpy(positions_dst, positions, size * sizeof(unsigned int));
-            }
-            return;
+        size_t count[0x100] = { 0 };
+        for (Record *p = begin; p != end; p++) {
+            count[(p->value >> shift) & 0xFF]++;
         }
 
-        unsigned int counts[0x100] = { 0 };
-        for (unsigned int i = 0; i < size; i++) {
-            counts[(values[i] >> shift) & 0xFF]++;
+        Record *bucket[0x100], *q = begin1;
+        for (int i = 0; i < 0x100; q += count[i++]) {
+            bucket[i] = q;
         }
 
-        unsigned int offsets[0x100] = { 0 };
-        unsigned int accum = 0;
-        for (unsigned int i = 0; i < 0x100; accum += counts[i++]) {
-            offsets[i] = accum;
+        for (Record *p = begin; p != end; p++) {
+            *bucket[(p->value >> shift) & 0xFF]++ = *p;
         }
 
-        for (unsigned int i = 0; i < size; i++) {
-            int value = values[i];
-            unsigned int off = offsets[(value >> shift) & 0xFF]++;
-            values_buf[off] = value;
-            positions_buf[off] = positions[i];
-        }
+        Record *tmp;
 
-        int *values_tmp = values;
-        values = values_buf;
-        values_buf = values_tmp;
+        tmp = begin;
+        begin = begin1;
+        begin1 = tmp;
 
-        unsigned int *positions_tmp = positions;
-        positions = positions_buf;
-        positions_buf = positions_tmp;
+        tmp = end;
+        end = end1;
+        end1 = tmp;
     }
 }
 
-static inline void _radix_sort_msb2(int *values, int *values_buf, int *values_dst,
-        unsigned int *positions, unsigned int *positions_buf, unsigned int *positions_dst,
-        unsigned int size, unsigned int shift) {
-    if (is_ascending(values, size)) {
-        if (values_dst != values) {
-            memcpy(values_dst, values, size * sizeof(int));
-        }
-        if (positions_dst != positions) {
-            memcpy(positions_dst, positions, size * sizeof(unsigned int));
+static inline void _radix_sort_indices_msb2(Record *dst, Record *begin, Record *end, Record *begin1,
+        unsigned int shift) {
+    size_t size = end - begin;
+    if (is_records_ascending(begin, size)) {
+        if (dst != begin) {
+            memcpy(dst, begin, size * sizeof(Record));
         }
         return;
     }
 
-    unsigned int counts[0x100] = { 0 };
-    for (unsigned int i = 0; i < size; i++) {
-        counts[(values[i] >> shift) & 0xFF]++;
+    size_t count[0x100] = { 0 };
+    for (Record *p = begin; p != end; p++) {
+        count[(p->value >> shift) & 0xFF]++;
     }
 
-    unsigned int offsets[0x100] = { 0 };
-    unsigned int ends[0x100] = { 0 };
-    unsigned int accum = 0;
-    for (unsigned int i = 0; i < 0x100; accum += counts[i++]) {
-        offsets[i] = ends[i] = accum;
+    Record *bucket[0x100], *obucket[0x100], *q = begin1;
+    for (int i = 0; i < 0x100; q += count[i++]) {
+        obucket[i] = bucket[i] = q;
     }
 
-    for (unsigned int i = 0; i < size; i++) {
-        int value = values[i];
-        unsigned int off = ends[(value >> shift) & 0xFF]++;
-        values_buf[off] = value;
-        positions_buf[off] = positions[i];
+    for (Record *p = begin; p != end; p++) {
+        *bucket[(p->value >> shift) & 0xFF]++ = *p;
     }
 
     for (int i = 0; i < 0x100; ++i) {
-        unsigned int count = counts[i];
-        if (count > 0) {
-            unsigned int off = offsets[i];
-            _radix_sort_lsb(values_buf + off, values + off, values_dst + off,
-                    positions_buf + off, positions + off, positions_dst + off, count, shift - 8);
-        }
+        size_t off = (obucket[i] - begin1);
+        _radix_sort_indices_lsb(dst + off, obucket[i], bucket[i], begin + off, shift - 8);
     }
 }
 
-static inline void _radix_sort_msb(int *values, int *values_buf, int *values_dst,
-        unsigned int *positions, unsigned int *positions_buf, unsigned int *positions_dst,
-        unsigned int size, unsigned int shift) {
-    if (is_ascending(values, size)) {
-        if (values_dst != values) {
-            memcpy(values_dst, values, size * sizeof(int));
-        }
-        if (positions_dst != positions) {
-            memcpy(positions_dst, positions, size * sizeof(unsigned int));
+static inline void _radix_sort_indices_msb(Record *dst, Record *begin, Record *end, Record *begin1,
+        unsigned int shift) {
+    size_t size = end - begin;
+    if (is_records_ascending(begin, size)) {
+        if (dst != begin) {
+            memcpy(dst, begin, size * sizeof(Record));
         }
         return;
     }
 
-    unsigned int counts[0x100] = { 0 };
-    for (unsigned int i = 0; i < size; i++) {
-        counts[((values[i] >> shift) & 0xFF) ^ (1 << 7)]++;
+    size_t count[0x100] = { 0 };
+    for (Record *p = begin; p != end; p++) {
+        count[((p->value >> shift) & 0xFF) ^ (1 << 7)]++;
     }
 
-    unsigned int offsets[0x100] = { 0 };
-    unsigned int ends[0x100] = { 0 };
-    unsigned int accum = 0;
-    for (unsigned int i = 0; i < 0x100; accum += counts[i++]) {
-        offsets[i] = ends[i] = accum;
+    Record *bucket[0x100], *obucket[0x100], *q = begin1;
+    for (int i = 0; i < 0x100; q += count[i++]) {
+        obucket[i] = bucket[i] = q;
     }
 
-    for (unsigned int i = 0; i < size; i++) {
-        int value = values[i];
-        unsigned int off = ends[((value >> shift) & 0xFF) ^ (1 << 7)]++;
-        values_buf[off] = value;
-        positions_buf[off] = positions[i];
+    for (Record *p = begin; p != end; p++) {
+        *bucket[((p->value >> shift) & 0xFF) ^ (1 << 7)]++ = *p;
     }
-
-    values = values_dst;
-    positions = positions_dst;
 
     for (int i = 0; i < 0x100; ++i) {
-        unsigned int count = counts[i];
-        if (count > 0) {
-            unsigned int off = offsets[i];
-            _radix_sort_msb2(values_buf + off, values + off, values_dst + off,
-                    positions_buf + off, positions + off, positions_dst + off, count, shift - 8);
-        }
+        size_t off = (obucket[i] - begin1);
+        _radix_sort_indices_msb2(dst + off, obucket[i], bucket[i], begin + off, shift - 8);
     }
 }
 
-void radix_sort(int *values_in, unsigned int *positions_in, int *values_out,
-        unsigned int *positions_out, unsigned int size) {
-    int *values_buf = malloc(size * sizeof(int));
-    unsigned int *positions_buf = malloc(size * sizeof(unsigned int));
+void radix_sort_indices(int *values_in, unsigned int *indices_in, int *values_out,
+        unsigned int *indices_out, size_t size) {
+    Record *buf = malloc(size * sizeof(Record));
+    Record *buf1 = malloc(size * sizeof(Record));
 
-    if (positions_in == NULL) {
-        positions_in = positions_out;
-
-        for (unsigned int i = 0; i < size; i++) {
-            positions_in[i] = i;
+    if (indices_in == NULL) {
+        for (size_t i = 0; i < size; i++) {
+            Record *r = &buf[i];
+            r->value = values_in[i];
+            r->position = i;
+        }
+    } else {
+        for (size_t i = 0; i < size; i++) {
+            Record *r = &buf[i];
+            r->value = values_in[i];
+            r->position = indices_in[i];
         }
     }
 
-    _radix_sort_msb(values_in, values_buf, values_out, positions_in, positions_buf,
-            positions_out, size, (sizeof(int) - 1) * 8);
+    _radix_sort_indices_msb(buf, buf, buf + size, buf1, (sizeof(int) - 1) * 8);
 
-    free(values_buf);
-    free(positions_buf);
+    for (size_t i = 0; i < size; i++) {
+        Record *r = &buf[i];
+        values_out[i] = r->value;
+        indices_out[i] = r->position;
+    }
+
+    free(buf);
+    free(buf1);
 }
 
 unsigned int binary_search_left(register int *values, unsigned int size, register int value) {

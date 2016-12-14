@@ -283,11 +283,11 @@ void join_sort_merge(int *values1, unsigned int *positions1, unsigned int count1
         unsigned int *positions2, unsigned int count2, PosVector *pos_out1, PosVector *pos_out2) {
     int *sorted_values1 = malloc(count1 * sizeof(int));
     unsigned int *sorted_positions1 = malloc(count1 * sizeof(unsigned int));
-    radix_sort(values1, positions1, sorted_values1, sorted_positions1, count1);
+    radix_sort_indices(values1, positions1, sorted_values1, sorted_positions1, count1);
 
     int *sorted_values2 = malloc(count2 * sizeof(int));
     unsigned int *sorted_positions2 = malloc(count2 * sizeof(unsigned int));
-    radix_sort(values2, positions2, sorted_values2, sorted_positions2, count2);
+    radix_sort_indices(values2, positions2, sorted_values2, sorted_positions2, count2);
 
     unsigned int i = 0;
     unsigned int j = 0;

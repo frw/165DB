@@ -22,8 +22,8 @@ typedef struct Record {
 /**
  * Sorts an array of integers in ascending order, and stores the indices corresponding to the original array.
  */
-void radix_sort(int *values_in, unsigned int *indices_in, int *values_out,
-        unsigned int *indices_out, unsigned int size);
+void radix_sort_indices(int *values_in, unsigned int *indices_in, int *values_out,
+        unsigned int *indices_out, size_t size);
 
 /**
  * Binary searches through a sorted array of values, returning the position of the left-most
