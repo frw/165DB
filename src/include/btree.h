@@ -37,21 +37,19 @@ struct BTreeNode {
 };
 
 typedef struct BTreeIndex {
-    bool sequential;
     BTreeNode *root;
     BTreeLeafNode *head;
     BTreeLeafNode *tail;
     unsigned int size;
 } BTreeIndex;
 
-void btree_init(BTreeIndex *index, bool sequential, int *values, unsigned int *positions,
-        unsigned int size);
+void btree_init(BTreeIndex *index, int *values, unsigned int *positions, unsigned int size);
 void btree_destroy(BTreeIndex *index);
 
 bool btree_save(BTreeIndex *index, FILE *file);
 bool btree_load(BTreeIndex *index, FILE *file);
 
-void btree_insert(BTreeIndex *index, int value, unsigned int *position);
+void btree_insert(BTreeIndex *index, int value, unsigned int position);
 bool btree_remove(BTreeIndex *index, int value, unsigned int position, unsigned int *positions_map,
         unsigned int *position_ptr);
 
@@ -62,7 +60,7 @@ unsigned int btree_select_lower(BTreeIndex *index, int high, unsigned int *resul
 unsigned int btree_select_higher(BTreeIndex *index, int low, unsigned int *result);
 unsigned int btree_select_range(BTreeIndex *index, int low, int high, unsigned int *result);
 
-int btree_min(BTreeIndex *index, unsigned int *position);
-int btree_max(BTreeIndex *index, unsigned int *position);
+int btree_min(BTreeIndex *index, unsigned int *position_ptr);
+int btree_max(BTreeIndex *index, unsigned int *position_ptr);
 
 #endif /* BTREE_H */

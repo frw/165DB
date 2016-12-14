@@ -222,11 +222,11 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
                 result_count = dsl_select_higher(values, values_count, deleted_rows,
                         comparator->low, result);
             } else if (comparator->low == comparator->high - 1) {
-                result_count = dsl_select_equal(values, values_count, deleted_rows, comparator->low,
-                        result);
+                result_count = dsl_select_equal(values, values_count, deleted_rows,
+                        comparator->low, result);
             } else {
-                result_count = dsl_select_range(values, values_count, deleted_rows, comparator->low,
-                        comparator->high, result);
+                result_count = dsl_select_range(values, values_count, deleted_rows,
+                        comparator->low, comparator->high, result);
             }
         } else {
             switch (index->type) {
@@ -430,31 +430,22 @@ void dsl_fetch(ClientContext *client_context, char *column_fqn, char *pos_var, c
 
 static inline void index_insert(ColumnIndex *index, int value, unsigned int position, int *values) {
     if (index->clustered) {
-        unsigned int clustered_position;
-
-        switch (index->type) {
-        case BTREE:
-            btree_insert(&index->fields.btree, value, &clustered_position);
-            break;
-        case SORTED:
-            sorted_insert(&index->fields.sorted, value, &clustered_position);
-            break;
-        }
-
-        pos_vector_insert(index->clustered_positions, clustered_position, position);
+        pos_vector_append(index->clustered_positions, position);
+        position = index->clustered_positions->size - 1;
 
         for (unsigned int j = 0; j < index->num_columns; j++) {
-            int_vector_insert(index->clustered_columns + j, clustered_position, values[j]);
+            int_vector_append(index->clustered_columns + j, values[j]);
         }
-    } else {
-        switch (index->type) {
-        case BTREE:
-            btree_insert(&index->fields.btree, value, &position);
-            break;
-        case SORTED:
-            sorted_insert(&index->fields.sorted, value, &position);
-            break;
-        }
+
+    }
+
+    switch (index->type) {
+    case BTREE:
+        btree_insert(&index->fields.btree, value, position);
+        break;
+    case SORTED:
+        sorted_insert(&index->fields.sorted, value, position);
+        break;
     }
 }
 
@@ -477,8 +468,8 @@ static void dsl_insert(Table *table, int *values) {
         if (replace) {
             column->values.data[insert_position] = value;
         } else {
-            insert_position = column->values.size;
             int_vector_append(&column->values, value);
+            insert_position = column->values.size - 1;
         }
 
         ColumnIndex *index = column->index;
@@ -523,37 +514,15 @@ void dsl_relational_insert(char *table_fqn, IntVector *values, Message *send_mes
 }
 
 static inline void index_remove(ColumnIndex *index, int value, unsigned int position) {
-    if (index->clustered) {
-        bool removed = false;
-        unsigned int clustered_position;
+    unsigned int *positions_map = index->clustered ? index->clustered_positions->data : NULL;
 
-        switch (index->type) {
-        case BTREE:
-            removed = btree_remove(&index->fields.btree, value, position,
-                    index->clustered_positions->data, &clustered_position);
-            break;
-        case SORTED:
-            removed = sorted_remove(&index->fields.sorted, value, position,
-                    index->clustered_positions->data, &clustered_position);
-            break;
-        }
-
-        if (removed) {
-            pos_vector_remove(index->clustered_positions, clustered_position);
-
-            for (unsigned int i = 0; i < index->num_columns; i++) {
-                int_vector_remove(index->clustered_columns + i, clustered_position);
-            }
-        }
-    } else {
-        switch (index->type) {
-        case BTREE:
-            btree_remove(&index->fields.btree, value, position, NULL, NULL);
-            break;
-        case SORTED:
-            sorted_remove(&index->fields.sorted, value, position, NULL, NULL);
-            break;
-        }
+    switch (index->type) {
+    case BTREE:
+        btree_remove(&index->fields.btree, value, position, positions_map, NULL);
+        break;
+    case SORTED:
+        sorted_remove(&index->fields.sorted, value, position, positions_map, NULL);
+        break;
     }
 }
 
@@ -580,13 +549,13 @@ static bool dsl_delete(Table *table, unsigned int position) {
     queue_push(&table->delete_queue, position);
 
     if (deleted_rows == NULL) {
-        table->deleted_rows = deleted_rows = malloc(sizeof(BoolVector));
+        deleted_rows = table->deleted_rows = malloc(sizeof(BoolVector));
 
         IntVector *first_column = &table->columns[0].values;
 
-        bool_vector_init(deleted_rows, first_column->capacity);
-        memset(deleted_rows->data, 0, first_column->size * sizeof(bool));
+        deleted_rows->data = calloc(first_column->size, sizeof(bool));
         deleted_rows->size = first_column->size;
+        deleted_rows->capacity = first_column->size;
     }
 
     deleted_rows->data[position] = true;

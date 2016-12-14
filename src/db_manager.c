@@ -217,10 +217,10 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
 
             switch (type) {
             case BTREE:
-                btree_init(&index->fields.btree, true, NULL, NULL, 0);
+                btree_init(&index->fields.btree, NULL, NULL, 0);
                 break;
             case SORTED:
-                sorted_init(&index->fields.sorted, true, NULL, NULL, 0);
+                sorted_init(&index->fields.sorted, NULL, NULL, 0);
                 break;
             }
         } else {
@@ -263,10 +263,10 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
 
             switch (type) {
             case BTREE:
-                btree_init(&index->fields.btree, true, leading_values, NULL, rows_count);
+                btree_init(&index->fields.btree, leading_values, NULL, rows_count);
                 break;
             case SORTED:
-                sorted_init(&index->fields.sorted, true, leading_values, NULL, rows_count);
+                sorted_init(&index->fields.sorted, leading_values, NULL, rows_count);
                 break;
             }
         }
@@ -278,10 +278,10 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
         if (rows_count == 0) {
             switch (type) {
             case BTREE:
-                btree_init(&index->fields.btree, false, NULL, NULL, 0);
+                btree_init(&index->fields.btree, NULL, NULL, 0);
                 break;
             case SORTED:
-                sorted_init(&index->fields.sorted, false, NULL, NULL, 0);
+                sorted_init(&index->fields.sorted, NULL, NULL, 0);
                 break;
             }
         } else {
@@ -301,10 +301,10 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
 
             switch (type) {
             case BTREE:
-                btree_init(&index->fields.btree, false, values, positions, rows_count);
+                btree_init(&index->fields.btree, values, positions, rows_count);
                 break;
             case SORTED:
-                sorted_init(&index->fields.sorted, false, values, positions, rows_count);
+                sorted_init(&index->fields.sorted, values, positions, rows_count);
                 break;
             }
 

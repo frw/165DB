@@ -6,10 +6,7 @@
 #include "utils.h"
 #include "vector.h"
 
-void sorted_init(SortedIndex *index, bool sequential, int *values, unsigned int *positions,
-        unsigned int size) {
-    index->sequential = sequential;
-
+void sorted_init(SortedIndex *index, int *values, unsigned int *positions, unsigned int size) {
     if (size == 0) {
         int_vector_init(&index->values, 0);
         pos_vector_init(&index->positions, 0);
@@ -20,13 +17,15 @@ void sorted_init(SortedIndex *index, bool sequential, int *values, unsigned int 
     memcpy(index->values.data, values, size * sizeof(int));
     index->values.size = size;
 
-    if (sequential) {
-        pos_vector_init(&index->positions, 0);
+    pos_vector_init(&index->positions, size);
+    if (positions == NULL) {
+        for (unsigned int i = 0; i < size; i++) {
+            index->positions.data[i] = i;
+        }
     } else {
-        pos_vector_init(&index->positions, size);
         memcpy(index->positions.data, positions, size * sizeof(unsigned int));
-        index->positions.size = size;
     }
+    index->positions.size = size;
 }
 
 void sorted_destroy(SortedIndex *index) {
@@ -35,11 +34,6 @@ void sorted_destroy(SortedIndex *index) {
 }
 
 bool sorted_save(SortedIndex *index, FILE *file) {
-    if (fwrite(&index->sequential, sizeof(index->sequential), 1, file) != 1) {
-        log_err("Unable to write Sorted sequential\n");
-        return false;
-    }
-
     if (!int_vector_save(&index->values, file)) {
         return false;
     }
@@ -55,11 +49,6 @@ bool sorted_load(SortedIndex *index, FILE *file) {
     int_vector_init(&index->values, 0);
     pos_vector_init(&index->positions, 0);
 
-    if (fread(&index->sequential, sizeof(index->sequential), 1, file) != 1) {
-        log_err("Unable to read Sorted sequential\n");
-        return false;
-    }
-
     if (!int_vector_load(&index->values, file)) {
         return false;
     }
@@ -71,39 +60,27 @@ bool sorted_load(SortedIndex *index, FILE *file) {
     return true;
 }
 
-void sorted_insert(SortedIndex *index, int value, unsigned int *position) {
+void sorted_insert(SortedIndex *index, int value, unsigned int position) {
     unsigned int idx = binary_search_right(index->values.data, index->values.size, value);
 
     int_vector_insert(&index->values, idx, value);
-
-    if (index->sequential) {
-        *position = idx;
-    } else {
-        pos_vector_insert(&index->positions, idx, *position);
-    }
+    pos_vector_insert(&index->positions, idx, position);
 }
 
 bool sorted_remove(SortedIndex *index, int value, unsigned int position,
         unsigned int *positions_map, unsigned int *position_ptr) {
     for (unsigned int idx = binary_search_left(index->values.data, index->values.size, value);
             idx < index->values.size && index->values.data[idx] == value; idx++) {
-        unsigned int pos;
-        if (index->sequential) {
-            pos = positions_map[idx];
-        } else {
-            pos = index->positions.data[idx];
-        }
+        unsigned int raw_pos = index->positions.data[idx];
+        unsigned int pos = positions_map != NULL ? positions_map[raw_pos] : raw_pos;
 
         if (pos == position) {
             if (position_ptr != NULL) {
-                *position_ptr = index->sequential ? idx : pos;
+                *position_ptr = raw_pos;
             }
 
             int_vector_remove(&index->values, idx);
-
-            if (!index->sequential) {
-                pos_vector_remove(&index->positions, idx);
-            }
+            pos_vector_remove(&index->positions, idx);
 
             return true;
         }
@@ -116,16 +93,12 @@ bool sorted_search(SortedIndex *index, int value, unsigned int position,
         unsigned int *positions_map, unsigned int *position_ptr) {
     for (unsigned int idx = binary_search_left(index->values.data, index->values.size, value);
             idx < index->values.size && index->values.data[idx] == value; idx++) {
-        unsigned int pos;
-        if (index->sequential) {
-            pos = positions_map[idx];
-        } else {
-            pos = index->positions.data[idx];
-        }
+        unsigned int raw_pos = index->positions.data[idx];
+        unsigned int pos = positions_map != NULL ? positions_map[raw_pos] : raw_pos;
 
         if (pos == position) {
             if (position_ptr != NULL) {
-                *position_ptr = index->sequential ? idx : pos;
+                *position_ptr = raw_pos;
             }
 
             return true;
@@ -159,15 +132,7 @@ unsigned int sorted_select_lower(SortedIndex *index, int high, unsigned int *res
         return 0;
     }
 
-    if (index->sequential) {
-        unsigned int position = idx;
-
-        for (unsigned int i = 0; i <= position; i++) {
-            result[i] = i;
-        }
-    } else {
-        memcpy(result, index->positions.data, (idx + 1) * sizeof(unsigned int));
-    }
+    memcpy(result, index->positions.data, (idx + 1) * sizeof(unsigned int));
 
     return idx + 1;
 }
@@ -178,16 +143,7 @@ unsigned int sorted_select_higher(SortedIndex *index, int low, unsigned int *res
         return 0;
     }
 
-    if (index->sequential) {
-        unsigned int position = idx;
-
-        for (unsigned int i = position; i < index->values.size; i++) {
-            result[i - position] = i;
-        }
-    } else {
-        memcpy(result, index->positions.data + idx,
-                (index->values.size - idx) * sizeof(unsigned int));
-    }
+    memcpy(result, index->positions.data + idx, (index->values.size - idx) * sizeof(unsigned int));
 
     return index->values.size - idx;
 }
@@ -203,42 +159,25 @@ unsigned int sorted_select_range(SortedIndex *index, int low, int high, unsigned
         return 0;
     }
 
-    if (index->sequential) {
-        unsigned int left_position = left_idx;
-        unsigned int right_position = right_idx;
-
-        for (unsigned int i = left_position; i <= right_position; i++) {
-            result[i - left_position] = i;
-        }
-    } else {
-        memcpy(result, index->positions.data + left_idx,
-                (right_idx - left_idx + 1) * sizeof(unsigned int));
-    }
+    memcpy(result, index->positions.data + left_idx,
+            (right_idx - left_idx + 1) * sizeof(unsigned int));
 
     return right_idx - left_idx + 1;
 }
 
-int sorted_min(SortedIndex *index, unsigned int *position) {
-    if (position != NULL) {
-        if (index->sequential) {
-            *position = 0;
-        } else {
-            *position = index->positions.data[0];
-        }
+int sorted_min(SortedIndex *index, unsigned int *position_ptr) {
+    if (position_ptr != NULL) {
+        *position_ptr = index->positions.data[0];
     }
 
     return index->values.data[0];
 }
 
-int sorted_max(SortedIndex *index, unsigned int *position) {
+int sorted_max(SortedIndex *index, unsigned int *position_ptr) {
     unsigned int idx = index->values.size - 1;
 
-    if (position != NULL) {
-        if (index->sequential) {
-            *position = idx;
-        } else {
-            *position = index->positions.data[idx];
-        }
+    if (position_ptr != NULL) {
+        *position_ptr = index->positions.data[idx];
     }
 
     return index->values.data[idx];
