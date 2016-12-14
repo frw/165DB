@@ -42,7 +42,8 @@ typedef struct CreateIndexOperator {
  * Necessary fields for loading.
  */
 typedef struct LoadOperator {
-    Vector *col_fqns;
+    unsigned int columns_count;
+    char **col_fqns;
     IntVector *col_vals;
 } LoadOperator;
 

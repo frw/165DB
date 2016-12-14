@@ -30,7 +30,8 @@ void dsl_create_column(char *name, char *table_fqn, Message *send_message);
 void dsl_create_index(char *column_fqn, ColumnIndexType type, bool clustered,
         Message *send_message);
 
-void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message);
+void dsl_load(unsigned int columns_count, char **col_fqns, IntVector *col_vals,
+        Message *send_message);
 
 void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
         Comparator *comparator, char *pos_out_var, Message *send_message);

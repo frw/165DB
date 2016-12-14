@@ -114,269 +114,130 @@ void tear_down_server() {
     unlink(SOCK_PATH);
 }
 
-bool load_file(DbOperator *dbo, MessageStatus *status) {
+bool recv_table(DbOperator *dbo, MessageStatus *status) {
     int client_socket = dbo->context->client_socket;
 
-    off_t file_size;
-    if (recv(client_socket, &file_size, sizeof(off_t), MSG_WAITALL) == -1) {
+    unsigned int columns_count;
+    if (recv(client_socket, &columns_count, sizeof(columns_count), MSG_WAITALL) <= 0) {
         *status = COMMUNICATION_ERROR;
         return false;
     }
 
-    // Duplicate client socket so that we can close it safely later.
-    int client_socket_dup = dup(client_socket);
-    if (client_socket_dup == -1) {
+    unsigned int rows_count;
+    if (recv(client_socket, &rows_count, sizeof(rows_count), MSG_WAITALL) <= 0) {
         *status = COMMUNICATION_ERROR;
         return false;
     }
 
-    FILE *file = fdopen(client_socket_dup, "r");
-    if (file == NULL) {
-        *status = COMMUNICATION_ERROR;
-        return false;
-    }
+    char **col_fqns = NULL;
+    unsigned int malloced_col_fqns = 0;
 
-    char read_buffer[READ_BUFFER_SIZE];
+    int **col_vals = NULL;
+    unsigned int malloced_col_vals = 0;
 
-    register char *line;
-    register bool error = false;
-
-    Vector *col_fqns = malloc(sizeof(Vector));
-    vector_init(col_fqns, DEFAULT_COLUMNS_COUNT);
-
-    char dummy = 0;
     HashTable name_set;
     hash_table_init(&name_set, NAME_SET_INITIAL_CAPACITY, NAME_SET_LOAD_FACTOR);
 
     char *table_name = NULL;
 
-
-    // Parse header.
-    for (;;) {
-        line = fgets(read_buffer, READ_BUFFER_SIZE, file);
-
-        if (line == NULL) {
+    col_fqns = malloc(columns_count * sizeof(char *));
+    for (unsigned int i = 0; i < columns_count; i++) {
+        unsigned int length;
+        if (recv(client_socket, &length, sizeof(length), MSG_WAITALL) <= 0) {
             *status = COMMUNICATION_ERROR;
-            log_info("Communication error\n");
-            error = true;
-            break;
+            goto ERROR;
         }
 
-        if (*line == '\0') {
-            // We've finished reading until the end of the file.
-            break;
+        char *col_fqn = col_fqns[malloced_col_fqns++] = malloc((length + 1) * sizeof(char));
+        if (recv(client_socket, col_fqn, length * sizeof(char), MSG_WAITALL) <= 0) {
+            *status = COMMUNICATION_ERROR;
+            goto ERROR;
         }
-        char *line_stripped = strip_whitespace(line);
-
-        if (*line_stripped == '\0') {
-            // Ignore empty lines.
-            continue;
-        }
-
-        char **line_stripped_index = &line_stripped;
-
-        char *token;
-        while ((token = strsep(line_stripped_index, ",")) != NULL) {
-            if (!is_valid_fqn(token, 2) || hash_table_get(&name_set, token) != NULL) {
-                *status = INCORRECT_FILE_FORMAT;
-                error = true;
-                goto after_header_loop;
-            }
-
-            int dot_count = 0;
-            for (char *c = token; *c != '\0'; c++) {
-                if (*c == '.' && ++dot_count == 2) {
-                    unsigned int length = c - token;
-                    if (table_name == NULL) {
-                        table_name = strndup(token, length);
-                    } else if (strncmp(token, table_name, length)) {
-                        *status = INCORRECT_FILE_FORMAT;
-                        error = true;
-                        goto after_header_loop;
-                    }
-                    break;
-                }
-            }
-
-            hash_table_put(&name_set, token, &dummy);
-
-            vector_append(col_fqns, strdup(token));
-        }
-
-        break;
+        col_fqn[length] = '\0';
     }
 
-after_header_loop:
-    // Free up unnecessary resources.
+    col_vals = malloc(columns_count * sizeof(int *));
+    for (unsigned int i = 0; i < columns_count; i++) {
+        int *column = col_vals[malloced_col_vals++] = malloc(rows_count * sizeof(int));
+        if (recv(client_socket, column, rows_count * sizeof(int), MSG_WAITALL) <= 0) {
+            *status = COMMUNICATION_ERROR;
+            goto ERROR;
+        }
+    }
+
+    for (unsigned int i = 0; i < columns_count; i++) {
+        char *col_fqn = col_fqns[i];
+
+        if (!is_valid_fqn(col_fqn, 2) || hash_table_get(&name_set, col_fqn) != NULL) {
+            *status = INCORRECT_FILE_FORMAT;
+            goto ERROR;
+        }
+
+        int dot_count = 0;
+        for (char *c = col_fqn; *c != '\0'; c++) {
+            if (*c == '.' && ++dot_count == 2) {
+                unsigned int length = c - col_fqn;
+                if (table_name == NULL) {
+                    table_name = strndup(col_fqn, length);
+                } else if (strncmp(col_fqn, table_name, length) != 0) {
+                    *status = INCORRECT_FILE_FORMAT;
+                    goto ERROR;
+                }
+                break;
+            }
+        }
+
+        hash_table_put(&name_set, col_fqn, col_fqn);
+    }
+
     hash_table_destroy(&name_set, NULL);
 
     if (table_name != NULL) {
         free(table_name);
     }
 
-    // Determine number of columns.
-    register unsigned int columns_count = 0;
-
-    if (!error) {
-        columns_count = col_fqns->size;
-
-        if (columns_count == 0) {
-            *status = INCORRECT_FILE_FORMAT;
-            error = true;
-        }
+    dbo->fields.load.columns_count = columns_count;
+    dbo->fields.load.col_fqns = col_fqns;
+    dbo->fields.load.col_vals = malloc(columns_count * sizeof(IntVector));
+    for (unsigned int i = 0; i < columns_count; i++) {
+        IntVector *v = dbo->fields.load.col_vals + i;
+        v->data = col_vals[i];
+        v->size = rows_count;
+        v->capacity = rows_count;
     }
 
-    // Initialize buffers.
-    int *col_vals[columns_count];
-    register unsigned int col_vals_capacity = 0;
+    free(col_vals);
 
-    if (!error) {
-        if (file_size > LARGE_FILE_THRESHOLD) {
-            col_vals_capacity = DEFAULT_ROWS_COUNT_LARGE;
-        } else {
-            col_vals_capacity = DEFAULT_ROWS_COUNT_SMALL;
-        }
+    return true;
 
-        for (unsigned int i = 0; i < columns_count; i++) {
-            col_vals[i] = malloc(col_vals_capacity * sizeof(int));
+ERROR:
+    if (col_fqns != NULL) {
+        for (unsigned int i = 0; i < malloced_col_fqns; i++) {
+            free(col_fqns[i]);
         }
+        free(col_fqns);
     }
 
-    register unsigned int rows_count = 0;
-
-    // Parse body.
-body_loop:
-    for (;;) {
-        line = fgets(read_buffer, READ_BUFFER_SIZE, file);
-
-        if (line == NULL) {
-            *status = COMMUNICATION_ERROR;
-            log_info("Communication error\n");
-            error = true;
-            break;
-        }
-
-        register char c = *line;
-
-        if (c == '\0') {
-            // We've finished reading the file.
-            break;
-        }
-
-        if (error) {
-            // Error occurred previously. Simply read until the end of the stream.
-            continue;
-        }
-
-        if (c == '\n') {
-            // Skip empty lines.
-            continue;
-        }
-
-        // Check if buffers need to be expanded.
-        if (rows_count == col_vals_capacity) {
-            col_vals_capacity *= 2;
-
-            for (unsigned int i = 0; i < columns_count; i++) {
-                col_vals[i] = realloc(col_vals[i], col_vals_capacity * sizeof(int));
-            }
-        }
-
-        register unsigned int column = 0;
-
-        for (;;) {
-            register bool parsed = false;
-
-            register int acc = 0;
-            register bool neg = false;
-
-            // Skip any whitespace at the start.
-            while (c == ' ') {
-                c = *++line;
-            };
-
-            // Check if prefixed with negative sign.
-            if (c == '-') {
-                neg = true;
-                c = *++line;
-            }
-
-            for (; c >= '0' && c <= '9'; c = *++line) {
-                acc = (acc * 10) + (c - '0');
-                parsed = true;
-            }
-
-            if (!parsed) {
-                *status = INCORRECT_FILE_FORMAT;
-                error = true;
-                goto body_loop;
-            }
-
-            if (neg) {
-                acc = -acc;
-            }
-
-            if (c == ',') {
-                col_vals[column][rows_count] = acc;
-
-                if (++column >= columns_count) {
-                    *status = INCORRECT_FILE_FORMAT;
-                    error = true;
-                    goto body_loop;
-                }
-
-                c = *++line;
-            } else if (c == '\n') {
-                col_vals[column][rows_count] = acc;
-
-                if (column + 1 < columns_count) {
-                    *status = INCORRECT_FILE_FORMAT;
-                    error = true;
-                    goto body_loop;
-                }
-
-                rows_count++;
-                goto body_loop;
-            } else {
-                *status = INCORRECT_FILE_FORMAT;
-                error = true;
-                goto body_loop;
-            }
-        }
-    }
-
-    if (error) {
-        for (unsigned int i = 0; i < columns_count; i++) {
+    if (col_vals != NULL) {
+        for (unsigned int i = 0; i < malloced_col_vals; i++) {
             free(col_vals[i]);
         }
-
-        vector_destroy(col_fqns, &free);
-        free(col_fqns);
-
-        log_err("Error occurred when receiving load payload.\n");
-    } else {
-        dbo->fields.load.col_fqns = col_fqns;
-
-        dbo->fields.load.col_vals = malloc(columns_count * sizeof(IntVector));
-        for (unsigned int i = 0; i < columns_count; i++) {
-            IntVector *v = dbo->fields.load.col_vals + i;
-            v->data = col_vals[i];
-            v->size = rows_count;
-            v->capacity = col_vals_capacity;
-        }
-
-        log_info("Received: %u columns, %u rows.\n", columns_count, rows_count);
+        free(col_vals);
     }
 
-    fclose(file);
+    hash_table_destroy(&name_set, NULL);
 
-    return !error;
+    if (table_name != NULL) {
+        free(table_name);
+    }
+
+    return false;
 }
 
 static inline void handle_operator(DbOperator *dbo, Message *message) {
     db_operator_log(dbo);
 
-    if (dbo->type == LOAD && !load_file(dbo, &message->status)) {
+    if (dbo->type == LOAD && !recv_table(dbo, &message->status)) {
         db_operator_free(dbo);
         return;
     }
@@ -400,7 +261,7 @@ static inline void handle_operator(DbOperator *dbo, Message *message) {
 static inline void handle_client(int client_socket) {
     log_info("Connected to socket: %d.\n", client_socket);
 
-    int length = 0;
+    int length;
 
     // Create two messages, one from which to read and one from which to receive.
     Message send_message = MESSAGE_INITIALIZER;

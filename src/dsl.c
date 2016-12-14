@@ -28,14 +28,13 @@ void dsl_create_index(char *column_fqn, ColumnIndexType type, bool clustered, Me
     index_create(column_fqn, type, clustered, send_message);
 }
 
-void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
-    unsigned int num_columns = col_fqns->size;
-
-    Column *columns[num_columns];
+void dsl_load(unsigned int columns_count, char **col_fqns, IntVector *col_vals,
+        Message *send_message) {
+    Column *columns[columns_count];
     Table *table = NULL;
 
-    for (unsigned int i = 0; i < num_columns; i++) {
-        Column *column = column_lookup(col_fqns->data[i]);
+    for (unsigned int i = 0; i < columns_count; i++) {
+        Column *column = column_lookup(col_fqns[i]);
         if (column == NULL) {
             send_message->status = COLUMN_NOT_FOUND;
             if (table != NULL) {
@@ -50,7 +49,7 @@ void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
 
                 pthread_rwlock_wrlock(&table->rwlock);
 
-                if (num_columns != table->columns_capacity) {
+                if (columns_count != table->columns_capacity) {
                     send_message->status = INSERT_COLUMNS_MISMATCH;
                     pthread_rwlock_unlock(&table->rwlock);
                     return;
@@ -65,7 +64,7 @@ void dsl_load(Vector *col_fqns, IntVector *col_vals, Message *send_message) {
 
     unsigned int rows_count = col_vals[0].size;
 
-    for (unsigned int i = 0; i < num_columns; i++) {
+    for (unsigned int i = 0; i < columns_count; i++) {
         IntVector *dst = &columns[i]->values;
         IntVector *src = col_vals + i;
 

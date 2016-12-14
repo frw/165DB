@@ -12,22 +12,35 @@
  */
 
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#include <sys/sendfile.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
 
 #include "common.h"
-#include "hash_table.h"
 #include "message.h"
 #include "utils.h"
 #include "vector.h"
+
+#define DEFAULT_COLUMNS_COUNT 4
+#define DEFAULT_ROWS_COUNT_SMALL 1000
+#define DEFAULT_ROWS_COUNT_LARGE 100000000
+
+#define LARGE_FILE_THRESHOLD 2147483648L
+
+typedef struct Table {
+    unsigned int columns_count;
+    unsigned int rows_count;
+    char **column_fqns;
+    int **column_values;
+} Table;
 
 /**
  * connect_client()
@@ -85,6 +98,291 @@ static inline char *parse_load(char *load_arguments) {
     }
 
     return load_arguments_stripped2;
+}
+
+MessageStatus load_table(char *file_path, Table *table) {
+    int fd = open(file_path, O_RDONLY);
+    if (fd == -1) {
+        return FILE_READ_ERROR;
+    }
+
+    struct stat file_stat;
+    if (fstat(fd, &file_stat) == -1) {
+        close(fd);
+        return FILE_READ_ERROR;
+    }
+
+    off_t file_size = file_stat.st_size;
+
+    char *addr = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0);
+    if (addr == MAP_FAILED) {
+        close(fd);
+        return FILE_READ_ERROR;
+    }
+
+    madvise(addr, file_size, MADV_SEQUENTIAL | MADV_WILLNEED);
+
+    MessageStatus status = OK;
+
+    char read_buffer[READ_BUFFER_SIZE];
+
+    Vector col_fqns;
+    vector_init(&col_fqns, DEFAULT_COLUMNS_COUNT);
+
+    register int **col_vals = NULL;
+
+    register char *ptr = addr;
+    register char *end = addr + file_size;
+    register char c;
+
+    // Parse header.
+    for (;;) {
+        if (ptr == end) {
+            goto POST_HEADER_LOOP;
+        }
+        c = *ptr++;
+
+        while (c == ' ') {
+            if (ptr == end) {
+                goto POST_HEADER_LOOP;
+            }
+            c = *ptr++;
+        }
+
+        if (c == '\n') {
+            // Ignore empty lines.
+            continue;
+        }
+
+        for (;;) {
+            register unsigned int i = 0;
+            for (; c != ',' && c != '\n'; c = *ptr++) {
+                read_buffer[i++] = c;
+
+                if (ptr == end) {
+                    break;
+                }
+            }
+            read_buffer[i] = '\0';
+
+            vector_append(&col_fqns, strdup(read_buffer));
+
+            if (c == ',') {
+                if (ptr == end) {
+                    status = INCORRECT_FILE_FORMAT;
+                    goto ERROR;
+                }
+
+                c = *ptr++;
+                continue;
+            }
+
+            break;
+        }
+
+        break;
+    }
+
+POST_HEADER_LOOP:
+    if (col_fqns.size == 0) {
+        status = INCORRECT_FILE_FORMAT;
+        goto ERROR;
+    }
+
+    unsigned int columns_count = col_fqns.size;
+
+    // Initialize buffers.
+    col_vals = malloc(columns_count * sizeof(unsigned int *));
+    register unsigned int col_vals_capacity;
+
+    if (file_size > LARGE_FILE_THRESHOLD) {
+        col_vals_capacity = DEFAULT_ROWS_COUNT_LARGE;
+    } else {
+        col_vals_capacity = DEFAULT_ROWS_COUNT_SMALL;
+    }
+
+    for (unsigned int i = 0; i < columns_count; i++) {
+        col_vals[i] = malloc(col_vals_capacity * sizeof(int));
+    }
+
+    register unsigned int rows_count = 0;
+
+    // Parse body.
+    for (;;) {
+        if (ptr == end) {
+            goto POST_BODY_LOOP;
+        }
+        c = *ptr++;
+
+        while (c == ' ') {
+            if (ptr == end) {
+                goto POST_BODY_LOOP;
+            }
+            c = *ptr++;
+        }
+
+        if (c == '\n') {
+            // Ignore empty lines.
+            continue;
+        }
+
+        // Check if buffers need to be expanded.
+        if (rows_count == col_vals_capacity) {
+            col_vals_capacity *= 2;
+
+            for (unsigned int i = 0; i < columns_count; i++) {
+                col_vals[i] = realloc(col_vals[i], col_vals_capacity * sizeof(int));
+            }
+        }
+
+        register unsigned int column = 0;
+
+        for (;;) {
+            register bool parsed = false;
+
+            register int acc = 0;
+            register bool neg = false;
+
+            // Ignore any leading whitespace.
+            while (c == ' ') {
+                if (ptr == end) {
+                    goto POST_BODY_LINE_LOOP;
+                }
+                c = *ptr++;
+            }
+
+            // Check if prefixed with negative sign.
+            if (c == '-') {
+                neg = true;
+
+                if (ptr == end) {
+                    goto POST_BODY_LINE_LOOP;
+                }
+                c = *ptr++;
+            }
+
+            // Parse digits.
+            for (; c >= '0' && c <= '9'; c = *ptr++) {
+                acc = (acc * 10) + (c - '0');
+                parsed = true;
+
+                if (ptr == end) {
+                    goto POST_BODY_LINE_LOOP;
+                }
+            }
+
+            // Ignore any trailing whitespace.
+            while (c == ' ') {
+                if (ptr == end) {
+                    goto POST_BODY_LINE_LOOP;
+                }
+                c = *ptr++;
+            }
+
+POST_BODY_LINE_LOOP:
+            if (!parsed) {
+                status = INCORRECT_FILE_FORMAT;
+                goto ERROR;
+            }
+
+            if (neg) {
+                acc = -acc;
+            }
+
+            col_vals[column][rows_count] = acc;
+
+            if (c == ',') {
+                if (ptr == end || ++column >= columns_count) {
+                    status = INCORRECT_FILE_FORMAT;
+                    goto ERROR;
+                }
+
+                c = *ptr++;
+                continue;
+            }
+
+            if ((ptr != end && c != '\n') || column + 1 < columns_count) {
+                status = INCORRECT_FILE_FORMAT;
+                goto ERROR;
+            }
+
+            rows_count++;
+
+            break;
+        }
+    }
+
+POST_BODY_LOOP:
+    table->columns_count = columns_count;
+    table->rows_count = rows_count;
+    table->column_fqns = (char **) col_fqns.data;
+    table->column_values = col_vals;
+
+    log_info("Parsed: %u columns, %u rows\n", columns_count, rows_count);
+
+    goto CLEANUP;
+
+ERROR:
+    vector_destroy(&col_fqns, &free);
+
+    if (col_vals != NULL) {
+        for (unsigned int i = 0; i < columns_count; i++) {
+            free(col_vals[i]);
+        }
+        free(col_vals);
+    }
+
+CLEANUP:
+    munmap(addr, file_size);
+
+    close(fd);
+
+    return status;
+}
+
+static inline void send_table(int client_socket, Table *table) {
+    if (send(client_socket, &table->columns_count, sizeof(table->columns_count), 0) == -1) {
+        log_err("Failed to send columns count.\n");
+        exit(1);
+    }
+
+    if (send(client_socket, &table->rows_count, sizeof(table->rows_count), 0) == -1) {
+        log_err("Failed to send rows count.\n");
+        exit(1);
+    }
+
+    for (unsigned int i = 0; i < table->columns_count; i++) {
+        char *column_fqn = table->column_fqns[i];
+
+        unsigned int length = strlen(column_fqn);
+
+        if (send(client_socket, &length, sizeof(length), 0) == -1) {
+            log_err("Failed to send columns FQN length.\n");
+            exit(1);
+        }
+
+        if (send(client_socket, column_fqn, length * sizeof(char), 0) == -1) {
+            log_err("Failed to send columns FQN.\n");
+            exit(1);
+        }
+
+        free(column_fqn);
+    }
+
+    free(table->column_fqns);
+
+    for (unsigned int i = 0; i < table->columns_count; i++) {
+        int *column = table->column_values[i];
+
+        if (send(client_socket, column, table->rows_count * sizeof(int), 0) == -1) {
+            log_err("Failed to send columns FQN.\n");
+            exit(1);
+        }
+
+        free(column);
+    }
+
+    free(table->column_values);
 }
 
 static inline void print_payload(char *payload) {
@@ -163,6 +461,8 @@ int main(void) {
     Message send_message = MESSAGE_INITIALIZER;
     Message recv_message = MESSAGE_INITIALIZER;
 
+    Table table;
+
     bool interactive = isatty(fileno(stdin));
 
     // Always output an interactive marker at the start of each command if the
@@ -199,7 +499,7 @@ int main(void) {
         memcpy(parse_buffer, read_buffer, send_message.length + 1);
         char *parse_buffer_stripped = strip_whitespace(parse_buffer);
 
-        int load_fd = -1;
+        bool loaded = false;
 
         if (strncmp(parse_buffer_stripped, "load", 4) == 0) {
             char *file_path = parse_load(parse_buffer_stripped + 4);
@@ -208,10 +508,13 @@ int main(void) {
                 continue;
             }
 
-            if ((load_fd = open(file_path, O_RDONLY)) == -1) {
-                print_error(FILE_READ_ERROR, interactive, line_num);
+            MessageStatus load_status = load_table(file_path, &table);
+            if (load_status != OK) {
+                print_error(load_status, interactive, line_num);
                 continue;
             }
+
+            loaded = true;
         }
 
         // Send the message_header, which tells server payload size.
@@ -226,37 +529,9 @@ int main(void) {
             exit(1);
         }
 
-        if (load_fd != -1) {
-            // A load query occured. Send file size and contents.
-
-            struct stat file_stat;
-
-            if (fstat(load_fd, &file_stat) == -1) {
-                log_err("Failed to stat file.\n");
-                exit(1);
-            }
-
-            off_t file_size = file_stat.st_size;
-
-            if (send(client_socket, &file_size, sizeof(off_t), 0) == -1) {
-                log_err("Failed to send file size.\n");
-                exit(1);
-            }
-
-            off_t offset = 0;
-            while(offset < file_size) {
-                if(sendfile(client_socket, load_fd, &offset, file_size - offset) == -1) {
-                    log_err("Failed to send file.\n");
-                    exit(1);
-                }
-            }
-
-            if (send(client_socket, "\n\0\n", 3, 0) == -1) {
-                log_err("Failed to send file terminator.\n");
-                exit(1);
-            }
-
-            close(load_fd);
+        if (loaded) {
+            // A load query occured. Send file contents.
+            send_table(client_socket, &table);
         }
 
         // Always wait for server response (even if it is just an OK message).
