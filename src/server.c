@@ -36,16 +36,8 @@
 #include "utils.h"
 #include "vector.h"
 
-#define CLIENTS_VECTOR_INITIAL_CAPACITY 128
-
 #define NAME_SET_INITIAL_CAPACITY 64
 #define NAME_SET_LOAD_FACTOR 0.75f
-
-#define DEFAULT_COLUMNS_COUNT 4
-#define DEFAULT_ROWS_COUNT_SMALL 1000
-#define DEFAULT_ROWS_COUNT_LARGE 100000000
-
-#define LARGE_FILE_THRESHOLD 2147483648L
 
 typedef struct ClientNode {
     int client_socket;
