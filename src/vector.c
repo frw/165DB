@@ -3,8 +3,8 @@
 #include <stdbool.h>
 #include <string.h>
 
-#include "vector.h"
 #include "utils.h"
+#include "vector.h"
 
 // Vector containing void pointers.
 #define STRUCT_NAME Vector

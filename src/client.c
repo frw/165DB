@@ -136,51 +136,58 @@ MessageStatus load_table(char *file_path, Table *table) {
     register char c;
 
     // Parse header.
-    for (;;) {
-        if (ptr == end) {
-            goto POST_HEADER_LOOP;
-        }
-        c = *ptr++;
+    if (ptr == end) {
+        goto POST_HEADER_LOOP;
+    }
+    c = *ptr++;
 
+    for (;;) {
+        register unsigned int len = 0;
+
+        // Ignore any leading whitespace.
         while (c == ' ') {
             if (ptr == end) {
-                goto POST_HEADER_LOOP;
+                goto POST_HEADER_LINE_LOOP;
             }
             c = *ptr++;
         }
 
-        if (c == '\n') {
-            // Ignore empty lines.
-            continue;
+        for (; c != ',' && c != '\n' && c != ' '; c = *ptr++) {
+            read_buffer[len++] = c;
+
+            if (ptr == end) {
+                goto POST_HEADER_LINE_LOOP;
+            }
         }
 
-        for (;;) {
-            register unsigned int len = 0;
-            for (; c != ',' && c != '\n'; c = *ptr++) {
-                read_buffer[len++] = c;
+        // Ignore any trailing whitespace.
+        while (c == ' ') {
+            if (ptr == end) {
+                goto POST_HEADER_LINE_LOOP;
+            }
+            c = *ptr++;
+        }
 
-                if (ptr == end) {
-                    break;
-                }
+POST_HEADER_LINE_LOOP:
+        if (len == 0) {
+            status = INCORRECT_FILE_FORMAT;
+            goto ERROR;
+        }
+
+        char *col_fqn = malloc((len + 1) * sizeof(char));
+        memcpy(col_fqn, read_buffer, len * sizeof(char));
+        col_fqn[len] = '\0';
+
+        vector_append(&col_fqns, col_fqn);
+
+        if (c == ',') {
+            if (ptr == end) {
+                status = INCORRECT_FILE_FORMAT;
+                goto ERROR;
             }
 
-            char *col_fqn = malloc((len + 1) * sizeof(char));
-            memcpy(col_fqn, read_buffer, len * sizeof(char));
-            col_fqn[len] = '\0';
-
-            vector_append(&col_fqns, col_fqn);
-
-            if (c == ',') {
-                if (ptr == end) {
-                    status = INCORRECT_FILE_FORMAT;
-                    goto ERROR;
-                }
-
-                c = *ptr++;
-                continue;
-            }
-
-            break;
+            c = *ptr++;
+            continue;
         }
 
         break;
@@ -216,18 +223,6 @@ POST_HEADER_LOOP:
             goto POST_BODY_LOOP;
         }
         c = *ptr++;
-
-        while (c == ' ') {
-            if (ptr == end) {
-                goto POST_BODY_LOOP;
-            }
-            c = *ptr++;
-        }
-
-        if (c == '\n') {
-            // Ignore empty lines.
-            continue;
-        }
 
         // Check if buffers need to be expanded.
         if (rows_count == col_vals_capacity) {
