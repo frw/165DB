@@ -140,6 +140,8 @@ bool recv_table(DbOperator *dbo, MessageStatus *status) {
         return false;
     }
 
+    unsigned int col_capacity = round_up_power_of_two(rows_count);
+
     char **col_fqns = NULL;
     unsigned int malloced_col_fqns = 0;
 
@@ -169,7 +171,7 @@ bool recv_table(DbOperator *dbo, MessageStatus *status) {
 
     col_vals = malloc(columns_count * sizeof(int *));
     for (unsigned int i = 0; i < columns_count; i++) {
-        int *column = col_vals[malloced_col_vals++] = malloc(rows_count * sizeof(int));
+        int *column = col_vals[malloced_col_vals++] = malloc(col_capacity * sizeof(int));
         if (!recv_and_check(client_socket, column, rows_count * sizeof(int), MSG_WAITALL)) {
             *status = COMMUNICATION_ERROR;
             goto ERROR;
@@ -214,7 +216,7 @@ bool recv_table(DbOperator *dbo, MessageStatus *status) {
         IntVector *v = dbo->fields.load.col_vals + i;
         v->data = col_vals[i];
         v->size = rows_count;
-        v->capacity = rows_count;
+        v->capacity = col_capacity;
     }
 
     free(col_vals);

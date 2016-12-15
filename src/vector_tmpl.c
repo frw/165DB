@@ -4,6 +4,7 @@ void FUNCTION_NAME(init)(STRUCT_NAME *v, unsigned int initial_capacity) {
     if (initial_capacity == 0) {
         v->data = NULL;
     } else {
+        initial_capacity = round_up_power_of_two(initial_capacity);
         v->data = malloc(initial_capacity * sizeof(TYPE));
     }
     v->size = 0;
@@ -21,7 +22,7 @@ static inline void FUNCTION_NAME(set_capacity)(STRUCT_NAME *v, unsigned int capa
 
 void FUNCTION_NAME(ensure_capacity)(STRUCT_NAME *v, unsigned int minimum_capacity) {
     if (v->capacity < minimum_capacity) {
-        FUNCTION_NAME(set_capacity)(v, minimum_capacity);
+        FUNCTION_NAME(set_capacity)(v, round_up_power_of_two(minimum_capacity));
     }
 }
 

@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "vector.h"
+#include "utils.h"
 
 // Vector containing void pointers.
 #define STRUCT_NAME Vector

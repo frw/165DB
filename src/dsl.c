@@ -552,9 +552,12 @@ static bool dsl_delete(Table *table, unsigned int position) {
 
         IntVector *first_column = &table->columns[0].values;
 
-        deleted_rows->data = calloc(first_column->size, sizeof(bool));
-        deleted_rows->size = first_column->size;
-        deleted_rows->capacity = first_column->size;
+        unsigned int size = first_column->size;
+        unsigned int capacity = round_up_power_of_two(size);
+
+        deleted_rows->data = calloc(capacity, sizeof(bool));
+        deleted_rows->size = size;
+        deleted_rows->capacity = capacity;
     }
 
     deleted_rows->data[position] = true;
@@ -826,10 +829,10 @@ void dsl_join(ClientContext *client_context, JoinType type, char *val_var1, char
 
     if (values1_count > 0 && values2_count > 0) {
         PosVector pos_out1;
-        pos_vector_init(&pos_out1, pos1->num_tuples);
+        pos_vector_init(&pos_out1, positions1_count);
 
         PosVector pos_out2;
-        pos_vector_init(&pos_out2, pos2->num_tuples);
+        pos_vector_init(&pos_out2, positions2_count);
 
         switch (type) {
         case HASH:

@@ -180,8 +180,8 @@ void column_create(char *name, char *table_fqn, Message *send_message) {
     free(column_fqn);
 }
 
-static inline void filter_removed(int *dst_values, unsigned int *dst_positions, int *values,
-        bool *deleted_rows, unsigned int values_count, unsigned int rows_count) {
+static inline void filter_removed(int *values, bool *deleted_rows, unsigned int values_count,
+        int *dst_values, unsigned int *dst_positions, unsigned int rows_count) {
     unsigned int j = 0;
     for (unsigned int i = 0; i < values_count && j < rows_count; i++) {
         dst_values[j] = values[i];
@@ -225,18 +225,18 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
             }
         } else {
             IntVector *leading_values_vector = index->clustered_columns + column->order;
-            int_vector_init(leading_values_vector, column->values.capacity);
+            int_vector_init(leading_values_vector, rows_count);
             int *leading_values = leading_values_vector->data;
 
             PosVector *positions_vector = index->clustered_positions;
-            pos_vector_init(positions_vector, column->values.capacity);
+            pos_vector_init(positions_vector, rows_count);
             unsigned int *sorted_positions = positions_vector->data;
 
             bool *deleted_rows = table->deleted_rows != NULL ? table->deleted_rows->data : NULL;
             if (deleted_rows == NULL) {
                 radix_sort_indices(column->values.data, NULL, leading_values, sorted_positions, rows_count);
             } else {
-                filter_removed(leading_values, sorted_positions, column->values.data, deleted_rows, column->values.size, rows_count);
+                filter_removed(column->values.data, deleted_rows, column->values.size, leading_values, sorted_positions, rows_count);
 
                 radix_sort_indices(leading_values, sorted_positions, leading_values, sorted_positions, rows_count);
             }
@@ -248,7 +248,7 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
             for (unsigned int i = 0; i < num_columns; i++) {
                 if (i != column->order) {
                     IntVector *values_vector = index->clustered_columns + i;
-                    int_vector_init(values_vector, column->values.capacity);
+                    int_vector_init(values_vector, rows_count);
 
                     int *sorted_values = values_vector->data;
                     int *unsorted_values = table->columns[i].values.data;
@@ -292,7 +292,7 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
             if (deleted_rows == NULL) {
                 radix_sort_indices(column->values.data, NULL, values, positions, rows_count);
             } else {
-                filter_removed(values, positions, column->values.data, deleted_rows, column->values.size, rows_count);
+                filter_removed(column->values.data, deleted_rows, column->values.size, values, positions, rows_count);
 
                 radix_sort_indices(values, positions, values, positions, rows_count);
             }
