@@ -20,7 +20,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <strings.h>
 #include <unistd.h>
 
 #include <sys/socket.h>
@@ -114,17 +113,29 @@ void tear_down_server() {
     unlink(SOCK_PATH);
 }
 
+static inline bool recv_and_check(int socket, void *buffer, size_t size, int flags) {
+    ssize_t received = recv(socket, buffer, size, flags);
+    if (received < 0) {
+        log_err("Client connection closed!\n");
+        return false;
+    } else if (received == 0) {
+        return false;
+    }
+
+    return true;
+}
+
 bool recv_table(DbOperator *dbo, MessageStatus *status) {
     int client_socket = dbo->context->client_socket;
 
     unsigned int columns_count;
-    if (recv(client_socket, &columns_count, sizeof(columns_count), MSG_WAITALL) <= 0) {
+    if (!recv_and_check(client_socket, &columns_count, sizeof(columns_count), MSG_WAITALL)) {
         *status = COMMUNICATION_ERROR;
         return false;
     }
 
     unsigned int rows_count;
-    if (recv(client_socket, &rows_count, sizeof(rows_count), MSG_WAITALL) <= 0) {
+    if (!recv_and_check(client_socket, &rows_count, sizeof(rows_count), MSG_WAITALL)) {
         *status = COMMUNICATION_ERROR;
         return false;
     }
@@ -143,13 +154,13 @@ bool recv_table(DbOperator *dbo, MessageStatus *status) {
     col_fqns = malloc(columns_count * sizeof(char *));
     for (unsigned int i = 0; i < columns_count; i++) {
         unsigned int length;
-        if (recv(client_socket, &length, sizeof(length), MSG_WAITALL) <= 0) {
+        if (!recv_and_check(client_socket, &length, sizeof(length), MSG_WAITALL)) {
             *status = COMMUNICATION_ERROR;
             goto ERROR;
         }
 
         char *col_fqn = col_fqns[malloced_col_fqns++] = malloc((length + 1) * sizeof(char));
-        if (recv(client_socket, col_fqn, length * sizeof(char), MSG_WAITALL) <= 0) {
+        if (!recv_and_check(client_socket, col_fqn, length * sizeof(char), MSG_WAITALL)) {
             *status = COMMUNICATION_ERROR;
             goto ERROR;
         }
@@ -159,7 +170,7 @@ bool recv_table(DbOperator *dbo, MessageStatus *status) {
     col_vals = malloc(columns_count * sizeof(int *));
     for (unsigned int i = 0; i < columns_count; i++) {
         int *column = col_vals[malloced_col_vals++] = malloc(rows_count * sizeof(int));
-        if (recv(client_socket, column, rows_count * sizeof(int), MSG_WAITALL) <= 0) {
+        if (!recv_and_check(client_socket, column, rows_count * sizeof(int), MSG_WAITALL)) {
             *status = COMMUNICATION_ERROR;
             goto ERROR;
         }
@@ -261,8 +272,6 @@ static inline void handle_operator(DbOperator *dbo, Message *message) {
 static inline void handle_client(int client_socket) {
     log_info("Connected to socket: %d.\n", client_socket);
 
-    int length;
-
     // Create two messages, one from which to read and one from which to receive.
     Message send_message = MESSAGE_INITIALIZER;
     Message recv_message = MESSAGE_INITIALIZER;
@@ -277,21 +286,13 @@ static inline void handle_client(int client_socket) {
     // 3. Send status of the received message (OK, UNKNOWN_QUERY, etc)
     // 4. Send response of request.
     do {
-        length = recv(client_socket, &recv_message.length, sizeof(recv_message.length),
-                MSG_WAITALL);
-        if (length < 0) {
-            log_err("Client connection closed!\n");
-            break;
-        } else if (length == 0) {
+        if (!recv_and_check(client_socket, &recv_message.length, sizeof(recv_message.length),
+                MSG_WAITALL)) {
             break;
         }
 
         char recv_buffer[recv_message.length];
-        length = recv(client_socket, recv_buffer, recv_message.length, MSG_WAITALL);
-        if (length < 0) {
-            log_err("Client connection closed!\n");
-            break;
-        } else if (length == 0) {
+        if (!recv_and_check(client_socket, recv_buffer, recv_message.length, MSG_WAITALL)) {
             break;
         }
         recv_buffer[recv_message.length] = '\0';
@@ -317,7 +318,8 @@ static inline void handle_client(int client_socket) {
         }
 
         // 3. Send status of the received message (OK, UNKNOWN_QUERY, etc)
-        if (send(client_socket, &send_message.status, sizeof(send_message.status), 0) == -1) {
+        if (send(client_socket, &send_message.status, sizeof(send_message.status), MSG_NOSIGNAL)
+                == -1) {
             log_err("Failed to send message.");
             free(send_message.payload);
             break;
@@ -325,14 +327,16 @@ static inline void handle_client(int client_socket) {
 
         // 4. Send response of request
         if (status == OK_WAIT_FOR_RESPONSE) {
-            if (send(client_socket, &send_message.length, sizeof(send_message.length), 0) == -1) {
+            if (send(client_socket, &send_message.length, sizeof(send_message.length), MSG_NOSIGNAL)
+                    == -1) {
                 log_err("Failed to send message.");
                 free(send_message.payload);
                 break;
             }
 
             if (send_message.length > 0
-                    && send(client_socket, send_message.payload, send_message.length, 0) == -1) {
+                    && send(client_socket, send_message.payload, send_message.length, MSG_NOSIGNAL)
+                            == -1) {
                 log_err("Failed to send message.");
                 free(send_message.payload);
                 break;
@@ -383,7 +387,7 @@ void *client_thread_routine(void *data) {
 // and remain running until it receives a shut-down command.
 int main(void) {
     if (!setup_server()) {
-        exit(1);
+        return 1;
     }
 
     atexit(&tear_down_server);
@@ -400,6 +404,7 @@ int main(void) {
             if (errno != EINVAL) {
                 log_err("L%d: Failed to accept a new connection.\n", __LINE__);
             }
+
             break;
         }
 

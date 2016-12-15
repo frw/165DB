@@ -73,17 +73,17 @@ static inline int connect_client() {
     return client_socket;
 }
 
-static inline ssize_t recv_and_check(int sockfd, void *buf, size_t len, int flags) {
-    ssize_t received = recv(sockfd, buf, len, flags);
+static inline bool recv_and_check(int socket, void *buffer, size_t size, int flags) {
+    ssize_t received = recv(socket, buffer, size, flags);
     if (received < 0) {
         log_err("Failed to receive message.\n");
-        exit(1);
+        return false;
     } else if (received == 0) {
         log_err("Server closed connection.\n");
-        exit(1);
+        return false;
     }
 
-    return received;
+    return true;
 }
 
 static inline char *parse_load(char *load_arguments) {
@@ -155,17 +155,20 @@ MessageStatus load_table(char *file_path, Table *table) {
         }
 
         for (;;) {
-            register unsigned int i = 0;
+            register unsigned int len = 0;
             for (; c != ',' && c != '\n'; c = *ptr++) {
-                read_buffer[i++] = c;
+                read_buffer[len++] = c;
 
                 if (ptr == end) {
                     break;
                 }
             }
-            read_buffer[i] = '\0';
 
-            vector_append(&col_fqns, strdup(read_buffer));
+            char *col_fqn = malloc((len + 1) * sizeof(char));
+            memcpy(col_fqn, read_buffer, len * sizeof(char));
+            col_fqn[len] = '\0';
+
+            vector_append(&col_fqns, col_fqn);
 
             if (c == ',') {
                 if (ptr == end) {
@@ -189,7 +192,7 @@ POST_HEADER_LOOP:
         goto ERROR;
     }
 
-    unsigned int columns_count = col_fqns.size;
+    register unsigned int columns_count = col_fqns.size;
 
     // Initialize buffers.
     col_vals = malloc(columns_count * sizeof(unsigned int *));
@@ -340,15 +343,16 @@ CLEANUP:
     return status;
 }
 
-static inline void send_table(int client_socket, Table *table) {
-    if (send(client_socket, &table->columns_count, sizeof(table->columns_count), 0) == -1) {
+static inline bool send_table(int client_socket, Table *table) {
+    if (send(client_socket, &table->columns_count, sizeof(table->columns_count), MSG_NOSIGNAL)
+            == -1) {
         log_err("Failed to send columns count.\n");
-        exit(1);
+        return false;
     }
 
-    if (send(client_socket, &table->rows_count, sizeof(table->rows_count), 0) == -1) {
+    if (send(client_socket, &table->rows_count, sizeof(table->rows_count), MSG_NOSIGNAL) == -1) {
         log_err("Failed to send rows count.\n");
-        exit(1);
+        return false;
     }
 
     for (unsigned int i = 0; i < table->columns_count; i++) {
@@ -356,14 +360,14 @@ static inline void send_table(int client_socket, Table *table) {
 
         unsigned int length = strlen(column_fqn);
 
-        if (send(client_socket, &length, sizeof(length), 0) == -1) {
+        if (send(client_socket, &length, sizeof(length), MSG_NOSIGNAL) == -1) {
             log_err("Failed to send columns FQN length.\n");
-            exit(1);
+            return false;
         }
 
-        if (send(client_socket, column_fqn, length * sizeof(char), 0) == -1) {
+        if (send(client_socket, column_fqn, length * sizeof(char), MSG_NOSIGNAL) == -1) {
             log_err("Failed to send columns FQN.\n");
-            exit(1);
+            return false;
         }
 
         free(column_fqn);
@@ -374,15 +378,17 @@ static inline void send_table(int client_socket, Table *table) {
     for (unsigned int i = 0; i < table->columns_count; i++) {
         int *column = table->column_values[i];
 
-        if (send(client_socket, column, table->rows_count * sizeof(int), 0) == -1) {
+        if (send(client_socket, column, table->rows_count * sizeof(int), MSG_NOSIGNAL) == -1) {
             log_err("Failed to send columns FQN.\n");
-            exit(1);
+            return false;
         }
 
         free(column);
     }
 
     free(table->column_values);
+
+    return true;
 }
 
 static inline void print_payload(char *payload) {
@@ -455,7 +461,7 @@ static inline void print_error(MessageStatus status, bool interactive, unsigned 
 int main(void) {
     int client_socket = connect_client();
     if (client_socket < 0) {
-        exit(1);
+        return 1;
     }
 
     Message send_message = MESSAGE_INITIALIZER;
@@ -476,6 +482,8 @@ int main(void) {
     // 2. Read from stdin until EOF.
     char read_buffer[READ_BUFFER_SIZE];
     send_message.payload = read_buffer;
+
+    bool error = false;
 
     unsigned int line_num = 0;
     while (fputs(prefix, stdout),
@@ -518,38 +526,54 @@ int main(void) {
         }
 
         // Send the message_header, which tells server payload size.
-        if (send(client_socket, &send_message.length, sizeof(send_message.length), 0) == -1) {
+        if (send(client_socket, &send_message.length, sizeof(send_message.length), MSG_NOSIGNAL)
+                == -1) {
             log_err("Failed to send message header.\n");
-            exit(1);
+            error = true;
+            break;
         }
 
         // Send the payload (query) to server.
-        if (send(client_socket, send_message.payload, send_message.length, 0) == -1) {
+        if (send(client_socket, send_message.payload, send_message.length, MSG_NOSIGNAL) == -1) {
             log_err("Failed to send query payload.\n");
-            exit(1);
+            error = true;
+            break;
         }
 
-        if (loaded) {
-            // A load query occured. Send file contents.
-            send_table(client_socket, &table);
+        // Send file contents if load query occured.
+        if (loaded && !send_table(client_socket, &table)) {
+            error = true;
+            break;
         }
 
         // Always wait for server response (even if it is just an OK message).
-        recv_and_check(client_socket, &recv_message.status, sizeof(recv_message.status), MSG_WAITALL);
+        if (!recv_and_check(client_socket, &recv_message.status, sizeof(recv_message.status),
+                MSG_WAITALL)) {
+            error = true;
+            break;
+        }
 
         bool shutdown = (recv_message.status & SHUTDOWN_FLAG) != 0;
         recv_message.status &= ~SHUTDOWN_FLAG;
 
         if (recv_message.status == OK_WAIT_FOR_RESPONSE) {
-            recv_and_check(client_socket, &recv_message.length, sizeof(recv_message.length), MSG_WAITALL);
+            if (!recv_and_check(client_socket, &recv_message.length, sizeof(recv_message.length),
+                    MSG_WAITALL)) {
+                error = true;
+                break;
+            }
 
             if (recv_message.length > 0) {
-                // Calculate number of bytes in response package.
+                // Allocate buffer to store payload.
                 char *payload = malloc(recv_message.length);
 
-                // Receive the payload and print it out.
-                recv_and_check(client_socket, payload, recv_message.length, MSG_WAITALL);
+                // Receive the payload.
+                if (!recv_and_check(client_socket, payload, recv_message.length, MSG_WAITALL)) {
+                    error = true;
+                    break;
+                }
 
+                // Print the payload.
                 print_payload(payload);
 
                 free(payload);
@@ -564,5 +588,6 @@ int main(void) {
     }
 
     close(client_socket);
-    return 0;
+
+    return error;
 }
