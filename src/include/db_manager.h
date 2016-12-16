@@ -92,6 +92,7 @@ void db_create(char *name, Message *send_message);
 void table_create(char *name, char *db_name, unsigned int num_columns, Message *send_message);
 void column_create(char *name, char *table_fqn, Message *send_message);
 void index_create(char *column_fqn, ColumnIndexType type, bool clustered, Message *send_message);
+void index_rebuild(ColumnIndex *index);
 void index_rebuild_all(Table *table);
 
 Db *db_lookup(char *db_name);

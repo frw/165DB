@@ -534,11 +534,9 @@ static bool dsl_delete(Table *table, unsigned int position) {
 
     for (unsigned int i = 0; i < table->columns_capacity; i++) {
         Column *column = table->columns + i;
-
         ColumnIndex *index = column->index;
         if (index != NULL) {
             int value = column->values.data[position];
-
             index_remove(index, value, position);
         }
     }
@@ -599,23 +597,14 @@ void dsl_relational_delete(ClientContext *client_context, char *table_fqn, char 
     }
 
     Column *source = pos->source;
-
     if (source != NULL) {
         ColumnIndex *source_index = source->index;
 
         if (source_index != NULL && source_index->clustered) {
-            unsigned int *mapped_positions = malloc(positions_count * sizeof(unsigned int));
-
             unsigned int *clustered_positions = source_index->clustered_positions->data;
             for (unsigned int i = 0; i < positions_count; i++) {
-                mapped_positions[i] = clustered_positions[positions[i]];
+                dsl_delete(table, clustered_positions[positions[i]]);
             }
-
-            for (unsigned int i = 0; i < positions_count; i++) {
-                dsl_delete(table, mapped_positions[i]);
-            }
-
-            free(mapped_positions);
         } else {
             for (unsigned int i = 0; i < positions_count; i++) {
                 dsl_delete(table, positions[i]);
@@ -632,7 +621,6 @@ void dsl_relational_delete(ClientContext *client_context, char *table_fqn, char 
 
 static inline void dsl_update(Table *table, Column *column, unsigned int position, int value) {
     int old_value = column->values.data[position];
-
     if (old_value == value) {
         return;
     }
@@ -663,7 +651,6 @@ static inline void dsl_update(Table *table, Column *column, unsigned int positio
         }
 
         Column *column = table->columns + i;
-
         ColumnIndex *index = column->index;
         if (index != NULL && index->clustered) {
             int column_value = column->values.data[position];
@@ -730,18 +717,10 @@ void dsl_relational_update(ClientContext *client_context, char *column_fqn, char
         ColumnIndex *source_index = source->index;
 
         if (source_index != NULL && source_index->clustered) {
-            unsigned int *mapped_positions = malloc(positions_count * sizeof(unsigned int));
-
             unsigned int *clustered_positions = source_index->clustered_positions->data;
             for (unsigned int i = 0; i < positions_count; i++) {
-                mapped_positions[i] = clustered_positions[positions[i]];
+                dsl_update(table, column, clustered_positions[positions[i]], value);
             }
-
-            for (unsigned int i = 0; i < positions_count; i++) {
-                dsl_update(table, column, mapped_positions[i], value);
-            }
-
-            free(mapped_positions);
         } else {
             for (unsigned int i = 0; i < positions_count; i++) {
                 dsl_update(table, column, positions[i], value);

@@ -87,8 +87,11 @@ void db_manager_shutdown() {
 }
 
 void db_create(char *name, Message *send_message) {
-    if (db_lookup(name) != NULL) {
+    pthread_mutex_lock(&db_manager_table_mutex);
+
+    if (hash_table_get(&db_manager_table, name) != NULL) {
         send_message->status = DATABASE_ALREADY_EXISTS;
+        pthread_mutex_unlock(&db_manager_table_mutex);
         return;
     }
 
@@ -100,23 +103,28 @@ void db_create(char *name, Message *send_message) {
 
     db_manager_dbs = db;
 
-    pthread_mutex_lock(&db_manager_table_mutex);
     hash_table_put(&db_manager_table, name, db);
+
     pthread_mutex_unlock(&db_manager_table_mutex);
 }
 
 void table_create(char *name, char *db_name, unsigned int num_columns, Message *send_message) {
     char *table_fqn = strjoin(db_name, name, '.');
-    if (table_lookup(table_fqn) != NULL) {
-        free(table_fqn);
+
+    pthread_mutex_lock(&db_manager_table_mutex);
+
+    if (hash_table_get(&db_manager_table, table_fqn) != NULL) {
         send_message->status = TABLE_ALREADY_EXISTS;
+        pthread_mutex_unlock(&db_manager_table_mutex);
+        free(table_fqn);
         return;
     }
 
-    Db *db = db_lookup(db_name);
+    Db *db = hash_table_get(&db_manager_table, db_name);
     if (db == NULL) {
-        free(table_fqn);
         send_message->status = DATABASE_NOT_FOUND;
+        pthread_mutex_unlock(&db_manager_table_mutex);
+        free(table_fqn);
         return;
     }
 
@@ -134,9 +142,8 @@ void table_create(char *name, char *db_name, unsigned int num_columns, Message *
 
     db->tables = table;
     db->tables_count++;
-
-    pthread_mutex_lock(&db_manager_table_mutex);
     hash_table_put(&db_manager_table, table_fqn, table);
+
     pthread_mutex_unlock(&db_manager_table_mutex);
 
     free(table_fqn);
@@ -144,23 +151,29 @@ void table_create(char *name, char *db_name, unsigned int num_columns, Message *
 
 void column_create(char *name, char *table_fqn, Message *send_message) {
     char *column_fqn = strjoin(table_fqn, name, '.');
-    if (column_lookup(column_fqn) != NULL) {
-        free(column_fqn);
+
+    pthread_mutex_lock(&db_manager_table_mutex);
+
+    if (hash_table_get(&db_manager_table, column_fqn) != NULL) {
         send_message->status = COLUMN_ALREADY_EXISTS;
+        pthread_mutex_unlock(&db_manager_table_mutex);
+        free(column_fqn);
         return;
     }
 
-    Table *table = table_lookup(table_fqn);
+    Table *table = hash_table_get(&db_manager_table, table_fqn);
     if (table == NULL) {
-        free(column_fqn);
         send_message->status = TABLE_NOT_FOUND;
+        pthread_mutex_unlock(&db_manager_table_mutex);
+        free(column_fqn);
         return;
     }
 
     if (table->columns_count == table->columns_capacity) {
         // Cannot add any more columns.
-        free(column_fqn);
         send_message->status = TABLE_FULL;
+        pthread_mutex_unlock(&db_manager_table_mutex);
+        free(column_fqn);
         return;
     }
 
@@ -172,9 +185,8 @@ void column_create(char *name, char *table_fqn, Message *send_message) {
     column->table = table;
 
     table->columns_count++;
-
-    pthread_mutex_lock(&db_manager_table_mutex);
     hash_table_put(&db_manager_table, column_fqn, column);
+
     pthread_mutex_unlock(&db_manager_table_mutex);
 
     free(column_fqn);
@@ -190,18 +202,13 @@ static inline void filter_removed(int *values, bool *deleted_rows, unsigned int 
     }
 }
 
-static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clustered) {
+static void index_init(ColumnIndex *index) {
+    Column *column = index->column;
     Table *table = column->table;
-
-    ColumnIndex *index = malloc(sizeof(ColumnIndex));
-    index->type = type;
-    index->clustered = clustered;
-    index->column = column;
 
     unsigned int rows_count = table->rows_count;
 
-    if (clustered) {
-        Table *table = column->table;
+    if (index->clustered) {
         unsigned int num_columns = table->columns_capacity;
 
         index->clustered_positions = malloc(sizeof(PosVector));
@@ -215,7 +222,7 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
                 int_vector_init(index->clustered_columns + i, 0);
             }
 
-            switch (type) {
+            switch (index->type) {
             case BTREE:
                 btree_init(&index->fields.btree, NULL, NULL, 0);
                 break;
@@ -261,7 +268,7 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
                 }
             }
 
-            switch (type) {
+            switch (index->type) {
             case BTREE:
                 btree_init(&index->fields.btree, leading_values, NULL, rows_count);
                 break;
@@ -276,7 +283,7 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
         index->num_columns = 0;
 
         if (rows_count == 0) {
-            switch (type) {
+            switch (index->type) {
             case BTREE:
                 btree_init(&index->fields.btree, NULL, NULL, 0);
                 break;
@@ -299,7 +306,7 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
 
             radix_sort_indices(column->values.data, NULL, values, positions, rows_count);
 
-            switch (type) {
+            switch (index->type) {
             case BTREE:
                 btree_init(&index->fields.btree, values, positions, rows_count);
                 break;
@@ -312,8 +319,31 @@ static ColumnIndex *index_build(Column *column, ColumnIndexType type, bool clust
             free(positions);
         }
     }
+}
 
-    return index;
+static void index_destroy(ColumnIndex *index) {
+    switch (index->type) {
+    case BTREE:
+        btree_destroy(&index->fields.btree);
+        break;
+    case SORTED:
+        sorted_destroy(&index->fields.sorted);
+        break;
+    }
+
+    if (index->clustered) {
+        if (index->clustered_positions != NULL) {
+            pos_vector_destroy(index->clustered_positions);
+            free(index->clustered_positions);
+        }
+
+        if (index->clustered_columns != NULL) {
+            for (unsigned int i = 0; i < index->num_columns; i++) {
+                int_vector_destroy(index->clustered_columns + i);
+            }
+            free(index->clustered_columns);
+        }
+    }
 }
 
 void index_create(char *column_fqn, ColumnIndexType type, bool clustered, Message *send_message) {
@@ -323,57 +353,63 @@ void index_create(char *column_fqn, ColumnIndexType type, bool clustered, Messag
         return;
     }
 
+    Table *table = column->table;
+
+    pthread_rwlock_wrlock(&table->rwlock);
+
     if (column->index != NULL) {
         send_message->status = INDEX_ALREADY_EXISTS;
+        pthread_rwlock_unlock(&table->rwlock);
         return;
     }
 
-    column->index = index_build(column, type, clustered);
+    ColumnIndex *index = malloc(sizeof(ColumnIndex));
+    index->type = type;
+    index->clustered = clustered;
+    index->column = column;
+
+    index_init(index);
+
+    column->index = index;
+
+    pthread_rwlock_unlock(&table->rwlock);
 }
 
-static void index_rebuild(Column *column) {
-    ColumnIndex *index = column->index;
-
-    ColumnIndexType type = index->type;
-    bool clustered = index->clustered;
-
-    index_free(index);
-
-    column->index = index_build(column, type, clustered);
+void index_rebuild(ColumnIndex *index) {
+    index_destroy(index);
+    index_init(index);
 }
 
 static void *index_rebuild_routine(void *data) {
-    Column *column = data;
-    index_rebuild(column);
+    ColumnIndex *index = data;
+    index_rebuild(index);
     return NULL;
 }
 
 void index_rebuild_all(Table *table) {
-    Column *columns[table->columns_count];
-    unsigned int index_count = 0;
+    ColumnIndex *indices[table->columns_count];
+    unsigned int indices_count = 0;
     for (unsigned int i = 0; i < table->columns_count; i++) {
-        Column *column = table->columns + i;
-        if (column->index != NULL) {
-            columns[index_count++] = column;
+        ColumnIndex *index = table->columns[i].index;
+        if (index != NULL) {
+            indices[indices_count++] = index;
         }
     }
 
-    if (index_count > 0) {
-        if (index_count == 1) {
-            index_rebuild(columns[0]);
-        } else {
-            pthread_t threads[index_count];
+    if (indices_count == 1) {
+        index_rebuild(indices[0]);
+    } else if (indices_count > 1){
+        pthread_t threads[indices_count];
 
-            for (unsigned int i = 0; i < index_count; i++) {
-                if (pthread_create(threads + i, NULL, &index_rebuild_routine, columns[i]) != 0) {
-                    log_err("Unable to index rebuild worker thread.");
-                    exit(1);
-                }
+        for (unsigned int i = 0; i < indices_count; i++) {
+            if (pthread_create(threads + i, NULL, &index_rebuild_routine, indices[i]) != 0) {
+                log_err("Unable to spawn index rebuild worker thread.");
+                exit(1);
             }
+        }
 
-            for (unsigned int i = 0; i < index_count; i++) {
-                pthread_join(threads[i], NULL);
-            }
+        for (unsigned int i = 0; i < indices_count; i++) {
+            pthread_join(threads[i], NULL);
         }
     }
 }
@@ -432,29 +468,7 @@ static inline void column_free(Column *column) {
 }
 
 static inline void index_free(ColumnIndex *index) {
-    switch (index->type) {
-    case BTREE:
-        btree_destroy(&index->fields.btree);
-        break;
-    case SORTED:
-        sorted_destroy(&index->fields.sorted);
-        break;
-    }
-
-    if (index->clustered) {
-        if (index->clustered_positions != NULL) {
-            pos_vector_destroy(index->clustered_positions);
-            free(index->clustered_positions);
-        }
-
-        if (index->clustered_columns != NULL) {
-            for (unsigned int i = 0; i < index->num_columns; i++) {
-                int_vector_destroy(index->clustered_columns + i);
-            }
-            free(index->clustered_columns);
-        }
-    }
-
+    index_destroy(index);
     free(index);
 }
 
