@@ -448,7 +448,7 @@ static inline void index_insert(ColumnIndex *index, int value, unsigned int posi
     }
 }
 
-static void dsl_insert(Table *table, int *values) {
+static void insert_row(Table *table, int *values) {
     bool replace;
     unsigned int insert_position = 0;
 
@@ -507,7 +507,7 @@ void dsl_relational_insert(char *table_fqn, IntVector *values, Message *send_mes
         return;
     }
 
-    dsl_insert(table, values->data);
+    insert_row(table, values->data);
 
     pthread_rwlock_unlock(&table->rwlock);
 }
@@ -525,7 +525,7 @@ static inline void index_remove(ColumnIndex *index, int value, unsigned int posi
     }
 }
 
-static bool dsl_delete(Table *table, unsigned int position) {
+static bool delete_row(Table *table, unsigned int position) {
     BoolVector *deleted_rows = table->deleted_rows;
 
     if (deleted_rows != NULL && deleted_rows->data[position]) {
@@ -603,23 +603,23 @@ void dsl_relational_delete(ClientContext *client_context, char *table_fqn, char 
         if (source_index != NULL && source_index->clustered) {
             unsigned int *clustered_positions = source_index->clustered_positions->data;
             for (unsigned int i = 0; i < positions_count; i++) {
-                dsl_delete(table, clustered_positions[positions[i]]);
+                delete_row(table, clustered_positions[positions[i]]);
             }
         } else {
             for (unsigned int i = 0; i < positions_count; i++) {
-                dsl_delete(table, positions[i]);
+                delete_row(table, positions[i]);
             }
         }
     } else {
         for (unsigned int i = 0; i < positions_count; i++) {
-            dsl_delete(table, positions[i]);
+            delete_row(table, positions[i]);
         }
     }
 
     pthread_rwlock_unlock(&table->rwlock);
 }
 
-static inline void dsl_update(Table *table, Column *column, unsigned int position, int value) {
+static inline void update(Table *table, Column *column, unsigned int position, int value) {
     int old_value = column->values.data[position];
     if (old_value == value) {
         return;
@@ -719,16 +719,16 @@ void dsl_relational_update(ClientContext *client_context, char *column_fqn, char
         if (source_index != NULL && source_index->clustered) {
             unsigned int *clustered_positions = source_index->clustered_positions->data;
             for (unsigned int i = 0; i < positions_count; i++) {
-                dsl_update(table, column, clustered_positions[positions[i]], value);
+                update(table, column, clustered_positions[positions[i]], value);
             }
         } else {
             for (unsigned int i = 0; i < positions_count; i++) {
-                dsl_update(table, column, positions[i], value);
+                update(table, column, positions[i], value);
             }
         }
     } else {
         for (unsigned int i = 0; i < positions_count; i++) {
-            dsl_update(table, column, positions[i], value);
+            update(table, column, positions[i], value);
         }
     }
 
