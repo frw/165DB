@@ -93,56 +93,74 @@ void dsl_load(unsigned int columns_count, char **col_fqns, IntVector *col_vals,
     pthread_rwlock_unlock(&table->rwlock);
 }
 
-static inline unsigned int select_lower(int *values, unsigned int values_count, int high,
-        unsigned int *result) {
+static inline unsigned int select_lower(int *values, unsigned int values_count,
+        bool *deleted_rows, int high, unsigned int *result) {
     unsigned int result_count = 0;
-    for (unsigned int i = 0; i < values_count; i++) {
-        result[result_count] = i;
-        result_count += values[i] < high;
+    if (deleted_rows == NULL) {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += values[i] < high;
+        }
+    } else {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += !deleted_rows[i] & (values[i] < high);
+        }
     }
     return result_count;
 }
 
-static inline unsigned int select_higher(int *values, unsigned int values_count, int low,
-        unsigned int *result) {
+static inline unsigned int select_higher(int *values, unsigned int values_count,
+        bool *deleted_rows, int low, unsigned int *result) {
     unsigned int result_count = 0;
-    for (unsigned int i = 0; i < values_count; i++) {
-        result[result_count] = i;
-        result_count += values[i] >= low;
+    if (deleted_rows == NULL) {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += values[i] >= low;
+        }
+    } else {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += !deleted_rows[i] & (values[i] >= low);
+        }
     }
     return result_count;
 }
 
-static inline unsigned int select_equal(int *values, unsigned int values_count, int value,
-        unsigned int *result) {
+static inline unsigned int select_equal(int *values, unsigned int values_count,
+        bool *deleted_rows, int value, unsigned int *result) {
     unsigned int result_count = 0;
-    for (unsigned int i = 0; i < values_count; i++) {
-        result[result_count] = i;
-        result_count += values[i] == value;
+    if (deleted_rows == NULL) {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += values[i] == value;
+        }
+    } else {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            result_count += !deleted_rows[i] & (values[i] == value);
+        }
     }
     return result_count;
 }
 
-static inline unsigned int select_range(int *values, unsigned int values_count, int low,
-        int high, unsigned int *result) {
+static inline unsigned int select_range(int *values, unsigned int values_count,
+        bool *deleted_rows, int low, int high, unsigned int *result) {
     unsigned int result_count = 0;
-    for (unsigned int i = 0; i < values_count; i++) {
-        result[result_count] = i;
-        int value = values[i];
-        result_count += (value >= low) & (value < high);
+    if (deleted_rows == NULL) {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            int value = values[i];
+            result_count += (value >= low) & (value < high);
+        }
+    } else {
+        for (unsigned int i = 0; i < values_count; i++) {
+            result[result_count] = i;
+            int value = values[i];
+            result_count += !deleted_rows[i] & (value >= low) & (value < high);
+        }
     }
     return result_count;
-}
-
-static inline unsigned int filter_deleted(unsigned int *result, unsigned int result_count,
-        bool *deleted_rows) {
-    unsigned int actual_result_count = 0;
-    for (unsigned int i = 0; i < result_count; i++) {
-        unsigned int position = result[i];
-        result[actual_result_count] = position;
-        actual_result_count += !deleted_rows[position];
-    }
-    return actual_result_count;
 }
 
 void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
@@ -197,18 +215,17 @@ void dsl_select(ClientContext *client_context, GeneralizedColumnHandle *col_hdl,
 
         if (index == NULL) {
             if (!comparator->has_low) {
-                result_count = select_lower(values, values_count, comparator->high, result);
+                result_count = select_lower(values, values_count, deleted_rows, comparator->high,
+                        result);
             } else if (!comparator->has_high) {
-                result_count = select_higher(values, values_count, comparator->low, result);
+                result_count = select_higher(values, values_count, deleted_rows, comparator->low,
+                        result);
             } else if (comparator->low == comparator->high - 1) {
-                result_count = select_equal(values, values_count, comparator->low, result);
+                result_count = select_equal(values, values_count, deleted_rows, comparator->low,
+                        result);
             } else {
-                result_count = select_range(values, values_count, comparator->low,
+                result_count = select_range(values, values_count, deleted_rows, comparator->low,
                         comparator->high, result);
-            }
-
-            if (deleted_rows != NULL) {
-                result_count = filter_deleted(result, result_count, deleted_rows);
             }
         } else {
             switch (index->type) {
